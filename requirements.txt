@@ -1,0 +1,3 @@
+# PC del proyecto (no hace falta ROS). Python 3.10+
+numpy
+opencv-python
