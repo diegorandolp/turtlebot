@@ -18,6 +18,8 @@ Ficha de referencia rápida y checklist para trabajar en la red sin internet.</t
 </tr>
 </table>
 
+> 🤖 **Grupo 3:** los datos y pasos de conexión de nuestro robot (IP `192.168.0.103`, `ROS_DOMAIN_ID=3`) están en [docs/robot_grupo3.md](docs/robot_grupo3.md).
+
 > **Base:** Adaptado sobre la guía de Luis Cortijo ([requeerimientos_turtlebot4](https://github.com/LuisEnriqueCortijoGonzales/requeerimientos_turtlebot4)) con optimizaciones probadas en el laboratorio (WSL 2, FastDDS Unicast, sincronización horaria sin internet y scripts propios). Manual oficial: [TurtleBot 4 User Manual](https://turtlebot.github.io/turtlebot4-user-manual/).
 
 Convenciones: **[PC]** = tu PC de desarrollo (Ubuntu nativo, WSL o VM) · **[ROBOT]** = terminal SSH en la Raspberry Pi.
@@ -341,7 +343,8 @@ turtleclaude4/
 ├── teleop_wasd.py             ← Teleoperación por teclado
 ├── docs/                      ← Documentación auxiliar y guías de campo
 │   ├── guia_conexion_turtlebot4.md ← Puesta a punto Windows + WSL 2 y vías de conexión
-│   └── tarjeta_offline_lab.md ← Checklist de bolsillo para el laboratorio sin internet
+│   ├── tarjeta_offline_lab.md ← Checklist de bolsillo para el laboratorio sin internet
+│   └── robot_grupo3.md        ← Conexión al robot del grupo 3 (IP, dominio 3, uso compartido)
 └── _legacy/                   ← Scripts antiguos y referencias previas
 ```
 
