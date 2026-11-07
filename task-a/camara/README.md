@@ -1,5 +1,22 @@
 # Tarea A · camara · Cámara solo en color (apaño para el X_LINK_ERROR)
 
+## Comandos importantes
+
+Desde la raíz del repositorio (`repo/turtlebot`), con el entorno virtual activado:
+
+```bash
+task-a/camara/camara_rgb.sh                           # 1. arrancar la cámara (tras cada reinicio del robot o de la cámara)
+python task-a/auto-1/probar_camara.py 192.168.0.104   # 2. ver en vivo lo que ve la cámara (caja verde = cara)
+```
+
+- El paso 1 pide la contraseña SSH del robot (`turtlebot4`). Debe terminar con `average rate: ~30` (imágenes por segundo).
+- El paso 2 no mueve el robot. Teclas: `s` guarda la foto en `task-a/auto-1/fotos/`, `q`/Esc salir.
+- El robot debe estar **fuera del dock** (en el dock la cámara se apaga). Para sacarlo: añade `--undock` al paso 2
+  (retrocede solo: deja espacio detrás).
+- Si la IP del robot cambia: `TB4_IP=192.168.0.x task-a/camara/camara_rgb.sh` y
+  `python task-a/auto-1/probar_camara.py 192.168.0.x`.
+- Si el paso 2 dice `sin imagen de la camara`, repite el paso 1.
+
 ## El problema (diagnosticado el 2026-11-07)
 
 La OAK-D conecta por USB 3, configura su pipeline y, **al empezar a transmitir, el enlace USB se cae**
