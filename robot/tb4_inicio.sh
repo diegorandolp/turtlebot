@@ -13,7 +13,7 @@
 # Variables: TB4_IP (192.168.0.103), SSHPASS (si tienes sshpass), PYTHON (python con numpy).
 set -euo pipefail
 
-IP="${TB4_IP:-192.168.0.103}"
+IP="${TB4_IP:-192.168.0.104}"
 TARGET="ubuntu@$IP"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY="${PYTHON:-python3}"

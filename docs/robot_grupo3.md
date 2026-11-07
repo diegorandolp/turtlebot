@@ -97,6 +97,7 @@ Desde la PC (Linux, WSL o Git Bash, con Python + numpy):
 cd turtlebot67
 robot/tb4_inicio.sh            # corrige la hora si hace falta, arranca el puente UDP y espera datos
 robot/tb4_inicio.sh --force    # si algo sigue sin datos: secuencia completa aunque la hora esté bien
+SSHPASS=turtlebot4 TB4_IP=192.168.0.104 robot/tb4_inicio.sh    # sin teclear la contraseña SSH (requiere sshpass)
 ```
 Si la hora estaba mal, tarda **~5–6 min** (la Create 3 se reinicia). Resultado esperado:
 `[ok] robot listo ...: bateria NN%, dock True, sin LiDAR (normal en el dock)`.

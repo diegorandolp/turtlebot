@@ -10,7 +10,7 @@
 # Variables: TB4_IP (192.168.0.103), SSHPASS (si tienes sshpass).
 set -euo pipefail
 
-IP="${TB4_IP:-192.168.0.103}"
+IP="${TB4_IP:-192.168.0.104}"
 TARGET="ubuntu@$IP"
 SSH=(ssh -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new)
 if [ -n "${SSHPASS:-}" ] && command -v sshpass >/dev/null; then SSH=(sshpass -e "${SSH[@]}"); fi
