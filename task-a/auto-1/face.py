@@ -39,7 +39,7 @@ class FaceWatcher:
     update() devuelve "none" | "candidate" (hay una cara: conviene parar) | "confirmed".
     """
 
-    def __init__(self, period=1.0, need=2, retry_s=0.4, error_backoff=4.0):
+    def __init__(self, period=0.6, need=2, retry_s=0.4, error_backoff=4.0):
         self.period, self.need, self.retry_s, self.backoff = period, need, retry_s, error_backoff
         self.hits = 0
         self.next_t = 0.0
@@ -47,6 +47,7 @@ class FaceWatcher:
         self.photos = 0              # fotos recibidas
         self.last_error = ""         # ultimo fallo de la camara (para mostrarlo)
         self.last_seen = False       # la ultima foto tenia cara
+        self.last_ok_t = None        # instante (del reloj de quien llama) de la ultima foto buena
 
     def update(self, now, take_photo, detect):
         if now < self.next_t:
@@ -61,6 +62,7 @@ class FaceWatcher:
             self.next_t = now + self.backoff
             return "none"
         self.photos += 1
+        self.last_ok_t = now
         self.last_seen = seen
         self.hits = self.hits + 1 if seen else 0
         self.next_t = now + (self.retry_s if self.hits else self.period)

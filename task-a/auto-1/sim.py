@@ -19,21 +19,38 @@ ROBOT_R = 0.17      # m, radio del Create 3
 
 
 def default_world():
-    """Laberinto 9 x 7 m con paredes interiores. Devuelve (rectangulos de pared, inicio, cara)."""
+    """Laberinto 9 x 7 m con paredes interiores. Devuelve (paredes, inicio, cara, orientacion de la cara)."""
     walls = [(-0.1, -0.1, 9.1, 0.0), (-0.1, 7.0, 9.1, 7.1), (-0.1, -0.1, 0.0, 7.1), (9.0, -0.1, 9.1, 7.1),   # borde
              (3.0, 0.0, 3.1, 4.5),        # pared que sale de abajo (hueco arriba)
              (6.0, 2.5, 6.1, 7.0),        # pared que sale de arriba (hueco abajo)
              (1.0, 4.5, 3.0, 4.6),        # repisa
              (4.2, 1.2, 5.0, 2.0),        # caja
              (7.2, 3.8, 8.2, 4.6)]        # caja
-    return walls, (1.0, 1.0, 0.0), (8.4, 6.2)
+    return walls, (1.0, 1.0, 0.0), (8.4, 6.2), math.atan2(-1.0, -1.0)
+
+
+def lateral_world():
+    """Pasillo en L: la foto esta en una pared LATERAL del primer tramo, fuera del cono de la camara al ir de frente."""
+    walls = [(-0.1, -0.1, 8.1, 0.0), (-0.1, 4.0, 5.0, 4.1), (-0.1, -0.1, 0.0, 4.1),          # borde sur, norte (parte), oeste
+             (5.0, 2.0, 8.1, 2.1), (8.0, -0.1, 8.1, 2.1), (5.0, 2.0, 5.1, 6.1), (7.0, 6.0, 7.1, 6.1),   # tramo este
+             (3.0, 1.2, 3.8, 1.9)]        # obstaculo
+    # foto en la pared norte del pasillo (y = 4.0), mirando al sur; el robot parte mirando al este
+    return walls, (0.6, 0.6, 0.0), (1.6, 3.95), -math.pi / 2
+
+
+WORLDS = {"laberinto": default_world, "lateral": lateral_world}
 
 
 class SimRobot:
-    def __init__(self, world=None, odom_noise=0.0, seed=1, odom_bias=0.0):
-        walls, start, face = world or default_world()
-        self.start, self.face = start, face
-        self.nx, self.ny = int(9.1 / RES) + 1, int(7.1 / RES) + 1
+    def __init__(self, world=None, odom_noise=0.0, seed=1, odom_bias=0.0, cam_fov_deg=60.0, cam_range=1.5,
+                 camera_ok=True):
+        if isinstance(world, str):
+            world = WORLDS[world]()
+        walls, start, face, face_normal = world or default_world()
+        self.start, self.face, self.face_normal = start, face, face_normal
+        self.cam_fov, self.cam_range, self.camera_ok = math.radians(cam_fov_deg), cam_range, camera_ok
+        self.photos_taken = 0
+        self.nx, self.ny = int(9.1 / RES) + 1, int(7.1 / RES) + 1      # el mundo cabe en 9.1 x 7.1 m
         self.grid = np.zeros((self.ny, self.nx), bool)
         for x0, y0, x1, y1 in walls:
             self.grid[max(int(y0 / RES), 0):int(y1 / RES) + 1, max(int(x0 / RES), 0):int(x1 / RES) + 1] = True
@@ -88,6 +105,9 @@ class SimRobot:
         return Status(0.9, False, fc < 0.28, False, False, True, fc, 5.0, 1, time.monotonic())
 
     def photo(self, timeout=4.0, quality=85):
+        if not self.camera_ok:
+            raise RuntimeError("sin imagen de la camara (simulada caida)")
+        self.photos_taken += 1
         return np.full((250, 250, 3), 255 if self.face_visible() else 0, np.uint8)
 
     # ---- simulacion ----
@@ -112,17 +132,23 @@ class SimRobot:
         out = np.where(hit.any(axis=1), t[first], np.inf)
         return out
 
-    def face_visible(self, max_dist=2.5, fov=math.radians(35)):
+    def face_visible(self):
+        """La foto se ve si esta dentro del cono de la camara (rango y angulo), sin pared de por medio y
+        de frente (la foto esta pegada a una superficie: no se ve desde mas de ~70 grados de la normal)."""
         fx, fy = self.face
         d = math.hypot(fx - self.wx, fy - self.wy)
-        if d > max_dist:
+        if d > self.cam_range or d < 0.15:
             return False
-        ang = math.atan2(fy - self.wy, fx - self.wx) - self.wth
-        ang = math.atan2(math.sin(ang), math.cos(ang))
-        if abs(ang) > fov:
+        ang = math.atan2(fy - self.wy, fx - self.wx)
+        rel = math.atan2(math.sin(ang - self.wth), math.cos(ang - self.wth))
+        if abs(rel) > self.cam_fov / 2:
             return False
-        for s in np.arange(0.1, d, RES):                      # linea de vision
-            if self.grid[int((self.wy + (fy - self.wy) * s / d) / RES), int((self.wx + (fx - self.wx) * s / d) / RES)]:
+        view = math.atan2(math.sin(ang + math.pi - self.face_normal), math.cos(ang + math.pi - self.face_normal))
+        if abs(view) > math.radians(70):
+            return False
+        for s in np.arange(0.1, d - 0.05, RES):                # linea de vision
+            ix, iy = int((self.wx + (fx - self.wx) * s / d) / RES), int((self.wy + (fy - self.wy) * s / d) / RES)
+            if self.grid[iy, ix]:
                 return False
         return True
 

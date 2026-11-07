@@ -1,0 +1,14 @@
+{
+  "motor": "BreezySLAM (RMHC)",
+  "pixels": 500,
+  "metros_por_pixel": 0.04,
+  "tamano_m": 20.0,
+  "origen": "centro del mapa = inicio del robot; x adelante, y izquierda",
+  "filas": "fila = y (en mapa.npy); mapa.png esta volteado para y hacia arriba",
+  "valores": "0 ocupado, 127 desconocido, 255 libre",
+  "pose_final_m_rad": [
+    0.12260624152064992,
+    -0.06903976928827227,
+    0.23282842434498827
+  ]
+}
