@@ -138,19 +138,61 @@ A; línea amarilla = rumbo elegido) y, en el simulador, la vista real desde arri
 | `--engine` | odom | Mapa con odometría pura (`breezy` = BreezySLAM, si está instalado) |
 | `--max-t` | 300 | Segundos máximos de la carrera |
 
-## El día de la competencia
+## Preparar y probar en el laboratorio
 
-1. Antes (con internet): `pip install -r requirements.txt`; opcional R50 (ver reconocimiento/README.md) y
-   `espeak-ng` para la voz. Correr `python -m unittest discover tests` y una carrera `--sim`.
-2. En el lab: `robot/tb4_inicio.sh` (deja corriendo el puente nuevo). Si la cámara falla:
-   `task-a/camara/camara_rgb.sh` (y `--hd` si van a usar fotos HD).
-3. `python task-a/carrera-1/probar_vision.py`: comprobar que la cámara da fotos, que ve las flechas del
-   circuito (sentido correcto) y que reconoce la foto. Mirar las **fotos/s** (≥ 4 para usar `--hd`).
-4. Medir el campo de visión si hay tiempo: con la cámara mirando una pared a 1 m, poner dos marcas a
-   ±0.30 m del centro y ver en qué columnas caen: `hfov = 2·atan(0.30 / (1 · (u_der − u_izq) / ancho))`.
-5. Poner el robot en A **mirando hacia el circuito** (la dirección inicial cuenta como "hacia adelante").
-6. `python task-a/carrera-1/carrera.py --undock` (o sin `--undock` si ya está fuera del dock) y `g`.
-   Un humano con la mano en la **barra espaciadora**.
+Todo lo de esta carpeta se validó **solo en simulación**. Antes de competir hay que comprobar con el robot
+real lo que el simulador supone. Los comandos van desde la raíz del repositorio.
+
+### Antes (con internet)
+
+1. `pip install -r requirements.txt`. Opcional: R50, mejor con caras chicas (ver
+   [reconocimiento/README.md](../../reconocimiento/README.md)), y `espeak-ng` para la voz
+   (`python -m reconocimiento.voz "prueba"`).
+2. `python -m unittest discover tests` y una carrera simulada: `python task-a/carrera-1/carrera.py --sim`.
+3. Preguntar al profesor, porque decide opciones:
+   - ¿Qué tan cerca de la foto cuenta como "llegar a B"? Si basta con ~1 m, `--temprano` ahorra segundos.
+   - ¿Cómo son las flechas? Si son de color (no negras), hay que usar `--flechas-color`.
+   - ¿A qué altura estará la foto? La cámara está a ~13 cm del suelo y mira horizontal: a 1 m ve hasta
+     ~0.5 m de altura. Una foto alta solo se ve de lejos y pequeña.
+
+### En el laboratorio: pruebas antes de competir
+
+4. `robot/tb4_inicio.sh`: corrige la hora, arranca ROS y **copia y arranca el puente nuevo** (hace falta
+   para las fotos rápidas y las HD). Si la cámara no da imagen: `task-a/camara/camara_rgb.sh`
+   (con `--hd` si van a usar fotos HD).
+5. Visión con el robot **quieto**: `python task-a/carrera-1/probar_vision.py` (con `--undock` si está en
+   el dock). Comprobar que:
+   - llegan fotos (mirar **fotos/s**: el simulador supone ~6–7; con menos, el robot reacciona más tarde);
+   - las flechas del circuito salen con el sentido correcto (`izq`/`der`) desde 1–2 m;
+   - reconoce la foto de B, o una foto impresa de algún compañero, y la votación llega a ~1.0.
+
+   Si las flechas no se detectan, probar `--flechas-color`. Para medir el detector con las señales reales:
+   elegir la clase con `1` izq / `2` der / `3` nada, guardar fotos con `s` (quedan en
+   `task-a/carrera-1/fotos/`) y luego `python task-a/carrera-1/evaluar_flechas.py --izq task-a/carrera-1/fotos/izq --der task-a/carrera-1/fotos/der --nada task-a/carrera-1/fotos/nada`.
+6. Medir el campo de visión (se supone 40° la preview y 66° la HD): con el robot mirando una pared a
+   d = 1 m, poner dos marcas a ±0.30 m del centro, guardar una foto (`s`) y ver en qué columnas caen:
+   `hfov = 2·atan(0.30 · ancho / (d · (u_der − u_izq)))` en grados. Si sale distinto, pasarlo con
+   `--hfov` (o `--hfov-hd`).
+7. Primera carrera **lenta**, mirando la ventana y con la mano en la barra espaciadora:
+   `python task-a/carrera-1/carrera.py --undock --vel 0.15 --traza` y `g`. Ver que esquiva sin frenazos,
+   toma bien las flechas, se acerca a la foto, dice el nombre correcto y vuelve a A. Luego repetir a la
+   velocidad normal (sin `--vel`).
+8. Si hay tiempo:
+   - **HD**: cámara con `camara_rgb.sh --hd`, `probar_vision.py --hd` (necesita ≥ 4 fotos/s) y una
+     carrera con `--hd`. Comparar el tiempo con la preview.
+   - **`--temprano`**: solo si el profesor acepta que el robot no llegue pegado a la foto.
+9. Cada carrera queda en `task-a/carrera-1/corridas/<fecha>.json` (qué pasó y cuándo; con `--traza`,
+   también la trayectoria). Sirve para depurar y para el informe.
+
+### En cada intento
+
+10. Poner el robot en A **mirando hacia el circuito**: la dirección inicial cuenta como "hacia adelante".
+11. `python task-a/carrera-1/carrera.py --undock` (sin `--undock` si ya está fuera del dock), más las
+    opciones elegidas. Arranca en **pausa**: el robot sale del dock antes de que empiece la carrera, y la
+    carrera empieza con `g`.
+12. Un humano con la mano en la **barra espaciadora** (pausa inmediata) por seguridad. En la Tarea A
+    tocar el robot o el programa termina el intento.
+13. Al volver a A, el nombre se dice en voz alta y queda en grande en la ventana hasta pulsar `q`.
 
 ## Archivos
 
@@ -175,7 +217,7 @@ explorador de fronteras de [auto-1](../auto-1) (`planner`, `coverage`, `explorer
 ## Límites conocidos (lo que falta comprobar con el robot real)
 
 - **Todo se validó en simulación**, incluido el puente real por ROS 2; nada se probó todavía con el robot.
-  Lo primero en el lab: `probar_vision.py` y una carrera con `--vel 0.15` mirando la ventana.
+  Ver [Preparar y probar en el laboratorio](#preparar-y-probar-en-el-laboratorio).
 - **Campo de visión supuesto**: 40° para la preview 250×250 (recorte cuadrado de la imagen 16:9) y 66° para
   la HD. Si es otro, los rumbos a las caras y señales salen corridos (se corrige solo al acercarse). Medirlo.
 - **La cámara mira horizontal a ~13 cm del suelo**: a 1 m ve hasta ~0.5 m de altura y a 0.6 m solo hasta

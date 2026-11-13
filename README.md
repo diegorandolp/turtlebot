@@ -55,6 +55,9 @@ python3 task-a/carrera-1/probar_vision.py                 # con el robot: ver fl
 python3 task-a/carrera-1/carrera.py --undock              # COMPETENCIA: arranca en pausa, g = empezar
 ```
 
+Antes de competir, seguir la guía [Preparar y probar en el laboratorio](task-a/carrera-1/README.md#preparar-y-probar-en-el-laboratorio)
+(todo está validado solo en simulación).
+
 Reconocimiento facial: [reconocimiento/README.md](reconocimiento/README.md). Tarea B:
 [task-b/gestos-1](task-b/gestos-1/README.md).
 
