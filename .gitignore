@@ -21,3 +21,13 @@ SPOILER_carta_de_suicidio_turtlebot2025.txt
 .claude/
 _legacy/
 legacy/
+
+# Datos locales y salidas de las corridas
+datos/*.zip
+task-a/carrera-1/corridas/
+task-a/auto-1/fotos/
+task-a/carrera-1/fotos/
+
+# Entorno virtual de Python
+venv/
+.venv/

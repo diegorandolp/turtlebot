@@ -56,6 +56,8 @@ def draw(engine, ex, trail, status, hz, scan, view, show_scan, watcher=None):
         cv2.line(img, px(*a), px(*b), (0, 220, 0), 1)                        # ruta (verde)
     if ex.goal is not None:
         cv2.drawMarker(img, px(*ex.goal), (0, 200, 0), cv2.MARKER_CROSS, 10, 2)
+    for fx, fy in ex.faces:
+        cv2.drawMarker(img, px(fx, fy), (255, 0, 255), cv2.MARKER_TILTED_CROSS, 12, 2)   # caras recordadas
     cv2.drawMarker(img, px(*ex.home), (255, 255, 255), cv2.MARKER_DIAMOND, 10, 1)    # A
     if ex.b_xy is not None:
         cv2.drawMarker(img, px(*ex.b_xy), (255, 0, 255), cv2.MARKER_STAR, 14, 2)      # B
@@ -108,13 +110,14 @@ def run(robot, args, sim=False, gui=True, detect=None, max_time=1800.0, dt=0.15,
             if ex.state in (EXPLORAR, CONFIRMAR):                  # buscar el rostro
                 res = tw.status if tw is not None else watcher.update(now, robot.photo, detect)
                 if res == "confirmed":
-                    ex.face_confirmed(pos)
+                    ex.face_confirmed(pos, scan.sector_min(-10, 10) if scan is not None else None)
                 elif res == "candidate":
                     ex.face_candidate()
                 elif ex.state == CONFIRMAR:
                     ex.face_rejected()
 
-            v, w = ex.step(now, engine.map_image(), pos, scan)
+            fresh = scan is not None and pose is not None and scan.age < MAX_AGE and pose.age < MAX_AGE
+            v, w = ex.step(now, engine.map_image(), pos, scan if fresh else None)    # sin scan o pose frescos: parar
             robot.move(v, w)
             if sim:
                 robot.advance(dt)
@@ -136,8 +139,6 @@ def run(robot, args, sim=False, gui=True, detect=None, max_time=1800.0, dt=0.15,
                     slam_run.save_map(engine, args.out, args.map_m)
             elif not sim:
                 time.sleep(0.05)
-            if not sim and not gui:
-                pass
 
             if ex.state in (HECHO, SIN_B):
                 finished_at = finished_at or now
@@ -153,7 +154,7 @@ def run(robot, args, sim=False, gui=True, detect=None, max_time=1800.0, dt=0.15,
             tw.close()
         robot.stop()
         summary = dict(state=ex.state, b_xy=ex.b_xy, pos=engine.position(), time=(robot.time if sim else time.monotonic()) - t_start,
-                       log=ex.log, bad_goals=len(ex.bad_goals))
+                       log=ex.log, faces=ex.faces, bad_goals=len(ex.bad_goals))
         if sim:
             ex_, ey_ = robot.wx - robot.start[0], robot.wy - robot.start[1]
             summary.update(collisions=robot.collisions, true_pos=(robot.wx, robot.wy),
@@ -170,7 +171,7 @@ def run(robot, args, sim=False, gui=True, detect=None, max_time=1800.0, dt=0.15,
 
 def parse(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("ip", nargs="?", default="192.168.0.103")
+    ap.add_argument("ip", nargs="?", default="192.168.0.104")
     ap.add_argument("--sim", action="store_true", help="simulador en vez del robot real")
     ap.add_argument("--no-gui", action="store_true", help="sin ventana (solo con --sim)")
     ap.add_argument("--go", action="store_true", help="empezar sin esperar la tecla g (por defecto arranca en pausa)")

@@ -37,7 +37,6 @@ MAX_AGE = 0.5                 # s: no se usa un scan/pose mas viejo
 def render(engine, trail, view, status, hz, driving, scan=None):
     img = engine.map_image()
     n = img.shape[0]
-    res_m = None
     img = cv2.cvtColor(np.flipud(img), cv2.COLOR_GRAY2BGR)       # y hacia arriba
     scale = max(1, view // n)
     img = cv2.resize(img, (n * scale, n * scale), interpolation=cv2.INTER_NEAREST)
@@ -86,7 +85,7 @@ def save_map(engine, outdir, size_m):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("ip", nargs="?", default="192.168.0.103")
+    ap.add_argument("ip", nargs="?", default="192.168.0.104")
     ap.add_argument("--drive", action="store_true", help="conducir con el teclado")
     ap.add_argument("--undock", action="store_true", help="sacar el robot del dock al empezar")
     ap.add_argument("--engine", choices=("auto", "breezy", "odom"), default="auto")
@@ -154,7 +153,8 @@ def main():
         except KeyboardInterrupt:
             pass
         finally:
-            robot.stop()
+            if args.drive:
+                robot.stop()                       # no pisar a la PC que conduce si solo mapeamos
             save_map(engine, args.out, args.map_m)
             cv2.destroyAllWindows()
 

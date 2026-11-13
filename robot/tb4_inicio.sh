@@ -10,7 +10,7 @@
 # Secuencia verificada el 2026-10-30: hora -> reiniciar turtlebot4.service -> reiniciar
 # la Create 3 (~5 min hasta que vuelve a publicar) -> puente UDP.
 #
-# Variables: TB4_IP (192.168.0.103), SSHPASS (si tienes sshpass), PYTHON (python con numpy).
+# Variables: TB4_IP (192.168.0.104), SSHPASS (si tienes sshpass), PYTHON (python con numpy).
 set -euo pipefail
 
 IP="${TB4_IP:-192.168.0.104}"

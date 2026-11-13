@@ -46,7 +46,7 @@ echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
 getent hosts github.com        # debe devolver una IP; no hace falta reiniciar WSL
 ```
 Solo resuelve mientras haya internet (p. ej. el celular por USB). No afecta al robot: la comunicación con él
-va por IP (`192.168.0.103`).
+va por IP (`192.168.0.104`).
 
 ## Uso (desde la raíz del repositorio)
 

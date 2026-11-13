@@ -10,11 +10,11 @@
 #
 # En el robot queda: ~/tb4_udp/tb4_bridge.py + ~/tb4_udp/tb4/ (protocolo compartido).
 #
-# Variables: TB4_IP (por defecto 192.168.0.103). Si exportas SSHPASS y tienes sshpass,
+# Variables: TB4_IP (por defecto 192.168.0.104). Si exportas SSHPASS y tienes sshpass,
 # no te pedira la contrasena; si no, ssh la pedira (o usa ssh-copy-id una vez).
 set -euo pipefail
 
-IP="${TB4_IP:-192.168.0.103}"
+IP="${TB4_IP:-192.168.0.104}"
 TARGET="ubuntu@$IP"
 DIR="tb4_udp"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

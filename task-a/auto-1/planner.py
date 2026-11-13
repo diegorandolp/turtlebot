@@ -34,7 +34,8 @@ class PlanResult:
 
 class Planner:
     def __init__(self, size_m=20.0, pixels=500, cell=2, robot_radius=0.20, margin=0.05,
-                 occ_thr=90, free_thr=150, min_frontier_cells=4, wall_pref_m=0.50, wall_pref_w=3.0):
+                 occ_thr=90, free_thr=150, min_frontier_cells=4, wall_pref_m=0.50, wall_pref_w=3.0,
+                 gain_w=0.0, horizon_m=2.0, keep_bonus_m=1.0):
         self.res = size_m / pixels               # m por pixel del mapa
         self.n = pixels
         self.f = cell                            # pixeles del mapa por celda de planificacion
@@ -45,6 +46,7 @@ class Planner:
         self.min_fr = min_frontier_cells
         self.pref_cells = wall_pref_m / self.cres
         self.pref_w = wall_pref_w
+        self.gain_w, self.horizon, self.keep_bonus = gain_w, horizon_m / self.cres, keep_bonus_m / self.cres
 
     # ---- conversiones ----
     def to_cell(self, x, y):
@@ -116,6 +118,52 @@ class Planner:
                         heapq.heappush(pq, (nd, (nr, nc)))
         return None
 
+    def _best_frontier(self, trav, extra, start, valid, prev_goal):
+        """Dijkstra hasta la frontera mas cercana y un poco mas alla (horizonte); entre los grupos de
+        frontera alcanzados elige el de mejor `costo - ganancia`: un grupo grande revela mas mapa que
+        uno diminuto un poco mas cerca. Devuelve la ruta o None."""
+        m = self.m
+        _, lab, stats, _ = cv2.connectedComponentsWithStats(valid.astype(np.uint8), connectivity=8)
+        dist = np.full((m, m), np.inf)
+        parent = {}
+        dist[start] = 0.0
+        pq = [(0.0, start)]
+        first = None
+        reached = {}                                         # grupo -> (costo, celda) de su celda mas cercana
+        while pq:
+            d, (r, c) = heapq.heappop(pq)
+            if d > dist[r, c]:
+                continue
+            if first is not None and d > first + self.horizon:
+                break
+            if valid[r, c]:
+                first = d if first is None else first
+                reached.setdefault(lab[r, c], (d, (r, c)))
+            for dr, dc, w in NEIGH:
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < m and 0 <= nc < m and trav[nr, nc]:
+                    if dr and dc and not (trav[r, nc] and trav[nr, c]):      # no cortar esquinas
+                        continue
+                    nd = d + w * (1.0 + extra[nr, nc])
+                    if nd < dist[nr, nc]:
+                        dist[nr, nc] = nd
+                        parent[(nr, nc)] = (r, c)
+                        heapq.heappush(pq, (nd, (nr, nc)))
+        if not reached:
+            return None
+        pg = self.to_cell(*prev_goal) if prev_goal is not None else None
+        best, best_score = None, math.inf
+        for g, (d, cell) in reached.items():
+            score = d - self.gain_w * stats[g, cv2.CC_STAT_AREA]      # costo y ganancia, ambos en celdas
+            if pg is not None and abs(cell[0] - pg[0]) <= 2 and abs(cell[1] - pg[1]) <= 2:
+                score -= self.keep_bonus                                     # histeresis: no cambiar de meta sin motivo
+            if score < best_score:
+                best, best_score = cell, score
+        path = [best]
+        while path[-1] != start:
+            path.append(parent[path[-1]])
+        return path[::-1]
+
     def _result(self, path, valid, t0, import_time):
         pts = [self.to_xy(r, c) for r, c in path]
         fr = np.argwhere(valid)
@@ -129,14 +177,7 @@ class Planner:
         trav, extra, valid, start = self.analyse(img, start_xy, bad_goals)
         if not valid.any():
             return PlanResult("no_frontier", ms=(time.perf_counter() - t0) * 1000)
-        path = None
-        if prev_goal is not None:                                   # histeresis: no cambiar de meta sin motivo
-            gr, gc = self.to_cell(*prev_goal)
-            near = valid[max(gr - 2, 0):gr + 3, max(gc - 2, 0):gc + 3]
-            if near.any():
-                path = self._dijkstra(trav, extra, start, lambda r, c: abs(r - gr) <= 2 and abs(c - gc) <= 2 and valid[r, c])
-        if path is None:
-            path = self._dijkstra(trav, extra, start, lambda r, c: valid[r, c])
+        path = self._best_frontier(trav, extra, start, valid, prev_goal)
         if path is None:
             return PlanResult("no_path", frontier_xy=np.array([self.to_xy(r, c) for r, c in np.argwhere(valid)]),
                               n_frontier_cells=int(valid.sum()), ms=(time.perf_counter() - t0) * 1000)

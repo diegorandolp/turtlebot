@@ -16,6 +16,7 @@ sys.path.insert(0, str(HERE.parents[1]))
 from explorer import CONFIRMAR, EXPLORAR, HECHO, PAUSA, SIN_B, VOLVER, Explorer   # noqa: E402
 from face import FaceWatcher                                                      # noqa: E402
 from planner import Planner                                                       # noqa: E402
+import safety                                                                     # noqa: E402
 from sim import SimRobot                                                          # noqa: E402
 
 N, SIZE = 500, 20.0
@@ -38,8 +39,13 @@ def corridor_map():
 
 
 class FakeScan:
-    def __init__(self, front=5.0, left=5.0, right=5.0):
-        self.f, self.l, self.r = front, left, right
+    age = 0.0
+
+    def __init__(self, front=5.0, left=5.0, right=5.0, rear=5.0, age=0.0):
+        self.f, self.l, self.r, self.b, self.age = front, left, right, rear, age
+
+    def points(self):
+        return np.array([self.f, 0.0, 0.0, -self.b]), np.array([0.0, self.l, -self.r, 0.0])
 
     def sector_min(self, a, b):
         if a >= -25 and b <= 25:
@@ -144,6 +150,79 @@ class TestExplorer(unittest.TestCase):
         v, w = e.step(7.0, img, (0.02, 0.0, 0.0), FakeScan())    # 7 s sin avanzar
         self.assertEqual(v, 0.0)
         self.assertIn(goal, e.bad_goals)
+
+    def test_pausa_larga_no_cuenta_como_atasco(self):
+        e = self.ex()
+        e.start()
+        img = corridor_map()
+        e.step(0.0, img, (0.0, 0.0, 0.0), FakeScan())
+        e.pause()
+        e.step(30.0, img, (0.0, 0.0, 0.0), FakeScan())
+        e.start()
+        v, w = e.step(31.0, img, (0.0, 0.0, 0.0), FakeScan())
+        self.assertEqual(e.bad_goals, [])                         # no descarta la meta por la pausa
+        self.assertGreater(v, 0.0)
+
+    def test_sin_ruta_a_A_termina(self):
+        e = self.ex(volver=True)
+        e.start()
+        e.face_confirmed((2.0, 0.0, 0.0))
+        img = corridor_map()
+        img[:, px(0.5):px(0.5) + 3] = 0                           # muro que corta el camino a A
+        e.step(0.0, img, (2.0, 0.0, math.pi), FakeScan())
+        e.step(9.0, img, (2.0, 0.0, math.pi), FakeScan())
+        self.assertEqual(e.state, HECHO)
+
+    def test_recuerda_caras_sin_duplicar(self):
+        e = self.ex()
+        e.remember_face((1.0, 0.0, 0.0), 1.0)
+        e.remember_face((1.2, 0.1, 0.0), 0.8)                     # la misma cara vista otra vez
+        e.remember_face((-2.0, 3.0, 0.0), None)
+        self.assertEqual(len(e.faces), 2)
+
+
+    def test_scan_viejo_para_el_robot(self):
+        e = self.ex()
+        e.start()
+        self.assertEqual(e.step(0.0, corridor_map(), (0.0, 0.0, 0.0), FakeScan(age=2.0)), (0.0, 0.0))
+        self.assertEqual(e.step(0.1, corridor_map(), (0.0, 0.0, 0.0), None), (0.0, 0.0))
+
+    def test_obstaculo_nuevo_en_la_ruta_lo_frena_el_guard(self):
+        e = self.ex()
+        e.start()
+        v, w = e.step(0.0, corridor_map(), (0.0, 0.0, 0.0), FakeScan(front=0.40))
+        self.assertLess(v, 0.06)                                  # 0.40 m al frente: casi parado
+
+    def test_encajonado_retrocede_si_atras_esta_libre(self):
+        e = self.ex()
+        e.start()
+        e.step(0.0, corridor_map(), (0.0, 0.0, 0.0), FakeScan(front=0.30, left=2.0, right=2.0))
+        v, w = e.step(2.0, corridor_map(), (0.0, 0.0, 0.0), FakeScan(front=0.30, left=2.0, right=2.0))
+        v2, _ = e.step(2.1, corridor_map(), (0.0, 0.0, 0.0), FakeScan(front=0.30, left=2.0, right=2.0))
+        self.assertLess(v2, 0.0)
+        v3, _ = e.step(2.2, corridor_map(), (0.0, 0.0, 0.0), FakeScan(front=0.30, left=2.0, right=2.0, rear=0.2))
+        self.assertGreaterEqual(v3, 0.0)                          # atras no esta libre: no retrocede
+
+
+class TestSafety(unittest.TestCase):
+    def test_arco_ve_la_esquina_que_un_sector_frontal_no_ve(self):
+        pts = np.array([[0.30, 0.45]])                           # esquina a la izquierda, fuera de +-25 grados
+        self.assertGreater(safety.arc_clearance(pts, 0.1, 0.0), 0.7)      # recto: pasa
+        self.assertLess(safety.arc_clearance(pts, 0.1, 0.3), 0.7)         # girando a la izquierda: choca
+
+    def test_pared_de_costado_no_bloquea(self):
+        pts = np.array([[0.0, 0.25], [0.3, 0.25], [-0.3, 0.25]])  # pared paralela a 25 cm
+        self.assertGreater(safety.arc_clearance(pts, 0.1, 0.0), 0.7)
+
+    def test_rear_clear(self):
+        self.assertTrue(safety.rear_clear(np.array([[-1.0, 0.0]])))
+        self.assertFalse(safety.rear_clear(np.array([[-0.3, 0.0]])))
+
+    def test_paint_live_pone_pared_en_el_mapa(self):
+        img = np.full((N, N), 255, np.uint8)
+        out = safety.paint_live(img, np.array([[0.5, 0.0]]), (1.0, 0.0, 0.0), RES, N)
+        self.assertEqual(out[px(0.0), px(1.5)], 0)
+        self.assertEqual(img[px(0.0), px(1.5)], 255)              # no toca el original
 
 
 class TestFaceWatcher(unittest.TestCase):

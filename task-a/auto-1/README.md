@@ -24,6 +24,7 @@ Construye sobre [slam-1](../slam-1) (mapa y pose con BreezySLAM). Todo corre en 
 | `explorar.py` | Programa principal (robot real o `--sim`), ventana y teclas |
 | `planner.py` | Fronteras y rutas sobre el mapa |
 | `explorer.py` | Estados y control (PAUSA, EXPLORAR, CONFIRMAR, VOLVER, HECHO, SIN_B) |
+| `safety.py` | Seguridad por LiDAR: arco del cuerpo, holgura lateral, marcha atrás, scan en vivo sobre el mapa |
 | `face.py` | Detector YuNet y lógica de confirmación |
 | `sim.py` | Simulador 2D del robot en un laberinto (mismo API que `TB4Client`) |
 | `test_auto.py` | Pruebas sin robot |
@@ -55,6 +56,20 @@ cruz verde = meta actual, rombo blanco = A, estrella magenta = B, puntos amarill
 - Avisa al grupo: solo una PC conduce a la vez.
 - Pasos de ~0.6 m o menos de ancho pueden quedar bloqueados: el robot los trata como pared por su radio de
   seguridad (`--radio`, defecto 0.20 m). Bájalo con cuidado si hace falta.
+
+## Seguridad extra de esta capa (además del freno del puente)
+
+- **Sin scan fresco (más de 0,5 s) o sin pose fresca: el robot se detiene.** Antes seguía con el último scan.
+- **Arco del cuerpo:** antes de enviar `(v, w)` se simula el arco que recorrería el robot (radio 0,21 m) contra todos los puntos del LiDAR. Si hay un choque a menos de 15 cm, `v = 0`; si no, frena de forma gradual. Ve esquinas y marcos de puerta que un sector frontal fijo no ve.
+- **Sitios estrechos:** con menos de ~35 cm de holgura lateral baja la velocidad a la mitad.
+- **Scan en vivo sobre el mapa:** un obstáculo nuevo (o un mapa desviado) bloquea la ruta de inmediato y obliga a replanificar, sin esperar a que el SLAM lo integre.
+- **Encajonado:** si lleva 1,5 s bloqueado y atrás hay espacio libre (> 40 cm), retrocede ~10 cm y reintenta.
+- **Sin salida:** si las fronteras que quedan no son alcanzables, tras 8 s termina en `SIN_B`; si no hay ruta a A, termina en `HECHO`. Ya no gira indefinidamente.
+- **Pausas:** al reanudar con `g` se reinician los cronómetros de atasco (antes descartaba una meta buena).
+- **Memoria de caras:** cada cara confirmada se guarda en el mapa (cruz magenta, `faces` en el resumen). Todo corre en la PC, sin internet.
+- `Planner(gain_w=...)` permite preferir fronteras grandes, pero en el simulador no mejoró (0,5 incluso empeoró), así que viene en 0.
+
+Probado solo en el simulador y con pruebas unitarias (27); aún no con el robot real. Primera prueba real: `--vel 0.08`, sin `--go` (arranca en pausa) y con alguien listo para pulsar espacio.
 
 ## Detección de rostros
 
