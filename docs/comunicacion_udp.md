@@ -48,7 +48,8 @@ with TB4Client("192.168.0.103") as robot:      # al salir del with, el robot se 
 | `status()` | `Status`: `battery`, `docked`, `front_blocked`, `rear_blocked`, `scan_stale`, `is_driver`, `front_clear`, `rear_clear`, `n_clients` |
 | `move(v, w)` | Envía velocidad (m/s, rad/s). Si dejas de llamarlo 0.5 s, el robot se detiene |
 | `stop()` | Parada inmediata |
-| `photo()` | Imagen BGR (numpy) de la OAK-D, 250×250 (*preview*), ~0.1 s. Falla si el robot está en el dock |
+| `photo()` | Imagen BGR (numpy) de la OAK-D, 250×250 (*preview*). Falla si el robot está en el dock |
+| `photo(hd=True)` | La imagen grande (1280×720) de `/oakd/rgb/image_raw`; hace falta lanzar la cámara con `task-a/camara/camara_rgb.sh --hd`. Un puente viejo devuelve la preview |
 | `undock()` / `dock()` | Acciones del Create 3; devuelven el mensaje del robot o lanzan `RuntimeError` |
 
 Ejes: x adelante, y izquierda (`base_link`). El puente ya corrige que el LiDAR del TurtleBot 4 está
@@ -68,14 +69,25 @@ El puente limita **siempre** lo que se envía, aunque el código de la PC se equ
 
 Esto **no** reemplaza la navegación de la Tarea A: es la última línea de defensa, no un planificador.
 
+## Fotos
+
+El puente se suscribe a la cámara **al primer pedido** y deja la suscripción abierta mientras sigan
+llegando pedidos: cada foto espera solo el próximo cuadro (con la preview, ~12 fotos/s medidas en la
+simulación ROS). A los 3 s sin pedidos (`--foto-mantener`) la cierra y la cámara deja de mandar datos al
+puente. Con `--hd-topic` se elige el tópico de las fotos HD (`Image`, o `CompressedImage` si termina en
+`/compressed`: un JPEG ya comprimido se reenvía sin decodificar) y con `--hd-width` el ancho máximo.
+
+Para probar el puente sin robot: `task-a/carrera-1/sim_ros.sh` (simulador como robot ROS 2 + este puente).
+
 ## Protocolo
 
 Little-endian. Cabecera `G3TB` + versión (1) + tipo (1 byte) + token (8 bytes = sha256 de la clave
 del grupo, `grupo3` por defecto; solo evita mezclarse con otro grupo, no es seguridad). Los formatos
-exactos están en `tb4/protocol.py`. El LiDAR viaja en milímetros `uint16` (~2 bytes por punto), la
+exactos están en `tb4/protocol.py`. `PHOTO` lleva `id, calidad` y, opcionalmente, un byte de cámara
+(`0` = preview, `1` = HD): un puente viejo solo lee los 5 primeros bytes y responde con la preview. El LiDAR viaja en milímetros `uint16` (~2 bytes por punto), la
 foto en trozos de 1200 bytes que el cliente vuelve a unir. Las PCs mandan `HELLO` cada segundo; el
 robot deja de enviarles datos tras 3 s sin noticias.
 
-Basado en las ideas del proyecto de otro grupo (`reference/`, `cv_turtlebot4`), corrigiendo:
-publicar ceros continuamente en `/cmd_vel`, aceptar comandos de cualquiera, emparejamiento que no
-sobrevive a reiniciar la PC, LiDAR en texto, imágenes continuas y la falta de odometría.
+Diseñado para evitar los problemas típicos de un puente UDP simple: publicar ceros continuamente en
+`/cmd_vel`, aceptar comandos de cualquiera, emparejamiento que no sobrevive a reiniciar la PC, LiDAR
+en texto, imágenes continuas y la falta de odometría.

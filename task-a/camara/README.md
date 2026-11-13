@@ -34,6 +34,7 @@ cambia**: usa el LiDAR, que es otro aparato.
 ```bash
 task-a/camara/camara_rgb.sh                 # color + USB 2
 task-a/camara/camara_rgb.sh --usb SUPER     # color en USB 3
+task-a/camara/camara_rgb.sh --hd            # además publica la imagen grande 1280x720 (fotos HD de carrera-1)
 task-a/camara/camara_rgb.sh --estado        # solo mirar: proceso, imágenes por segundo, log
 task-a/camara/camara_rgb.sh --normal        # volver a la cámara de siempre
 ```

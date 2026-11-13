@@ -15,6 +15,7 @@ Ejemplo:
         robot.move(0.1, 0.0)              # hay que llamarlo en bucle: si dejas de llamarlo,
                                           # el robot se para solo (~0.5 s)
         img = robot.photo()               # imagen BGR de la camara (numpy), o TimeoutError
+        img = robot.photo(hd=True)        # la imagen grande (1280x720), si el puente y la camara la dan
 
 Prueba rapida de conexion (desde la raiz del repositorio):
     python3 -m tb4.client 192.168.0.103
@@ -144,10 +145,13 @@ class TB4Client:
         for _ in range(3):
             self._send(P.pack_cmd(self.token, self._next_seq(), 0.0, 0.0))
 
-    def photo(self, timeout=4.0, quality=85):
-        """Pide una imagen a la camara del robot. Devuelve BGR (numpy) o lanza TimeoutError/RuntimeError."""
+    def photo(self, timeout=4.0, quality=85, hd=False):
+        """Pide una imagen a la camara del robot. Devuelve BGR (numpy) o lanza TimeoutError/RuntimeError.
+        hd=True pide la imagen grande (ver robot/tb4_bridge.py --hd-topic); un puente viejo devuelve la
+        preview de 250x250."""
         import cv2
-        req = self._request(lambda r: P.pack_photo(self.token, r, quality), timeout)
+        cam = P.HD if hd else P.PREVIEW
+        req = self._request(lambda r: P.pack_photo(self.token, r, quality, cam), timeout)
         data = b"".join(req["chunks"][i] for i in range(req["total"]))
         img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
         if img is None:

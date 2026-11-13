@@ -9,7 +9,7 @@ Formato de cada datagrama (little-endian):
   token     = primeros 8 bytes de sha256(clave del grupo); evita que el robot obedezca
               paquetes de otro grupo que use el mismo puerto (no es seguridad real).
 
-PC -> robot:  HELLO, BYE, CMD(seq, v, w), PHOTO(req, calidad), DOCK(req), UNDOCK(req)
+PC -> robot:  HELLO, BYE, CMD(seq, v, w), PHOTO(req, calidad[, camara]), DOCK(req), UNDOCK(req)
 Robot -> PC:  SCAN, ODOM, STATUS, IMG (trozos de un JPEG), EVENT (respuestas)
 
 Convencion de ejes (base_link del robot): x adelante, y izquierda, angulos en radianes,
@@ -34,7 +34,8 @@ SCAN, ODOM, STATUS, IMG, EVENT = b"s", b"o", b"t", b"i", b"e"
 _HEADER = struct.Struct("<4sBc8s")
 _CMD = struct.Struct("<Iff")              # seq, v (m/s), w (rad/s)
 _REQ = struct.Struct("<I")                # id de peticion
-_PHOTO = struct.Struct("<IB")             # id, calidad JPEG
+_PHOTO = struct.Struct("<IB")             # id, calidad JPEG (formato original: siempre la preview)
+_PHOTO_CAM = struct.Struct("<IBB")        # id, calidad JPEG, camara (PREVIEW | HD)
 _SCAN = struct.Struct("<dfffH")           # stamp, angle_min, angle_inc, range_max, n
 _ODOM = struct.Struct("<dfffff")          # stamp, x, y, yaw, v, w
 _STATUS = struct.Struct("<dfBBBffB")      # stamp, bateria, docked, flags, driver, front, rear, n_clientes
@@ -45,6 +46,9 @@ HEADER_SIZE = _HEADER.size
 IMG_CHUNK = 1200          # bytes de JPEG por datagrama (cabe en un paquete Wi-Fi sin fragmentar)
 RANGE_INVALID = 0         # lectura invalida (nan o menor que range_min)
 RANGE_FAR = 65535         # sin obstaculo dentro del alcance (inf)
+
+# Camaras de PHOTO: la preview de la OAK-D (250x250, la de siempre) o la imagen en color grande
+PREVIEW, HD = 0, 1
 
 # Bits de STATUS.flags
 FLAG_FRONT_BLOCKED = 1
@@ -90,12 +94,20 @@ def unpack_cmd(payload):
     return seq, v, w
 
 
-def pack_photo(token, req_id, quality=80):
-    return pack(PHOTO, token, _PHOTO.pack(req_id, max(1, min(100, int(quality)))))
+def pack_photo(token, req_id, quality=80, camara=PREVIEW):
+    q = max(1, min(100, int(quality)))
+    if camara == PREVIEW:                     # el formato original: lo entiende cualquier puente
+        return pack(PHOTO, token, _PHOTO.pack(req_id, q))
+    return pack(PHOTO, token, _PHOTO_CAM.pack(req_id, q, camara))
 
 
 def unpack_photo(payload):
-    return _PHOTO.unpack_from(payload)
+    """-> (id, calidad, camara). Un puente viejo lee solo los 5 primeros bytes (id, calidad) y manda la
+    preview: el cliente lo nota por el tamano de la imagen."""
+    if len(payload) >= _PHOTO_CAM.size:
+        return _PHOTO_CAM.unpack_from(payload)
+    req_id, q = _PHOTO.unpack_from(payload)
+    return req_id, q, PREVIEW
 
 
 def pack_req(kind, token, req_id):

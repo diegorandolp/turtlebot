@@ -5,7 +5,7 @@ Puente UDP <-> ROS 2 que corre EN EL ROBOT (Raspberry Pi del TurtleBot 4, grupo 
 La PC habla solo UDP (ver tb4/protocol.py y tb4/client.py); este nodo traduce:
   - CMD (v, w) de la PC        -> /cmd_vel (TwistStamped), con freno de emergencia por LiDAR
   - /scan, /odom, bateria, dock -> SCAN, ODOM, STATUS a todas las PCs conectadas
-  - PHOTO                       -> un JPEG de la camara OAK-D, solo cuando se pide
+  - PHOTO                       -> un JPEG de la camara OAK-D, solo cuando se pide (preview 250x250 o HD)
   - DOCK / UNDOCK               -> acciones /dock y /undock del Create 3
 
 Seguridad (se aplica aqui, en el robot, aunque el Wi-Fi vaya lento):
@@ -19,6 +19,9 @@ Uso (en el robot; mas facil con robot/tb4_inicio.sh o robot/deploy_bridge.sh des
   source /etc/turtlebot4/setup.bash
   python3 tb4_bridge.py                     # puerto 5600, clave "grupo3"
   python3 tb4_bridge.py --max-linear 0.2    # limitar mas la velocidad
+
+Fotos: mientras una PC siga pidiendo fotos, la suscripcion a la camara queda abierta (cada pedido espera
+solo el proximo cuadro); a los --foto-mantener s sin pedidos se cierra y la camara deja de mandar datos.
 """
 import argparse
 import math
@@ -34,7 +37,7 @@ from rclpy.qos import qos_profile_sensor_data
 
 from geometry_msgs.msg import TwistStamped
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import BatteryState, Image, LaserScan
+from sensor_msgs.msg import BatteryState, CompressedImage, Image, LaserScan
 
 try:
     from tb4 import protocol as P
@@ -49,6 +52,27 @@ CLIENT_TIMEOUT = 3.0       # s sin HELLO -> la PC deja de recibir datos
 DRIVER_RELEASE = 1.0       # s sin CMD -> otra PC puede tomar el control
 STOP_REPEAT = 3            # ceros publicados al detenerse
 PHOTO_TIMEOUT = 3.0
+
+
+def imgmsg_a_bgr(msg):
+    """sensor_msgs/Image -> BGR (numpy). Con cv_bridge si esta; si no, a mano para las codificaciones comunes."""
+    try:
+        from cv_bridge import CvBridge
+        return CvBridge().imgmsg_to_cv2(msg, desired_encoding="bgr8")
+    except ImportError:
+        pass
+    canales = {"bgr8": 3, "rgb8": 3, "mono8": 1, "bgra8": 4, "rgba8": 4}.get(msg.encoding)
+    if canales is None:
+        raise RuntimeError(f"codificacion {msg.encoding} no soportada sin cv_bridge")
+    a = np.frombuffer(bytes(msg.data), np.uint8).reshape(msg.height, msg.step)[:, :msg.width * canales]
+    a = a.reshape(msg.height, msg.width, canales)
+    if msg.encoding in ("rgb8", "rgba8"):
+        a = a[:, :, 2::-1] if canales == 3 else a[:, :, [2, 1, 0]]
+    elif canales == 4:
+        a = a[:, :, :3]
+    elif canales == 1:
+        a = np.repeat(a, 3, axis=2)
+    return np.ascontiguousarray(a)
 
 
 class Bridge(Node):
@@ -75,7 +99,10 @@ class Bridge(Node):
         self.battery = -1.0
         self.docked = P.DOCK_UNKNOWN
         self.pending = []            # peticiones (tipo, addr, id, extra) para el hilo de ROS
-        self.photo = None            # peticion de foto en curso
+        self.fotos = {P.PREVIEW: dict(topic=args.image_topic, max_w=0),       # una suscripcion por camara
+                      P.HD: dict(topic=args.hd_topic, max_w=args.hd_width)}
+        for f in self.fotos.values():
+            f.update(sub=None, esperan=[], t_pedido=0.0)
         self.last_log = {}
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -162,8 +189,8 @@ class Bridge(Node):
                 if self.take_control(addr, now):
                     self.cmd, self.cmd_time = (v, w), now
             elif kind == P.PHOTO:
-                req_id, quality = P.unpack_photo(payload)
-                self.pending.append((P.PHOTO, addr, req_id, quality))
+                req_id, quality, camara = P.unpack_photo(payload)
+                self.pending.append((P.PHOTO, addr, req_id, (quality, camara)))
             elif kind in (P.DOCK, P.UNDOCK):
                 req_id = P.unpack_req(payload)
                 if self.take_control(addr, now):
@@ -242,7 +269,7 @@ class Bridge(Node):
 
         for kind, addr, req_id, extra in pending:
             if kind == P.PHOTO:
-                self.start_photo(addr, req_id, extra)
+                self.start_photo(addr, req_id, *extra)
             elif kind in (P.DOCK, P.UNDOCK):
                 self.start_dock(kind, addr, req_id)
             else:
@@ -269,44 +296,73 @@ class Bridge(Node):
 
     # ---------- foto bajo demanda ----------
 
-    def start_photo(self, addr, req_id, quality):
-        if self.photo is not None:
-            self.photo["waiters"].append((addr, req_id))
+    def start_photo(self, addr, req_id, quality, camara=P.PREVIEW):
+        f = self.fotos.get(camara)
+        if f is None or not f["topic"]:
+            self.reply(addr, req_id, False, f"camara {camara} no configurada en el puente")
             return
-        sub = self.create_subscription(Image, self.args.image_topic, self.on_image, qos_profile_sensor_data)
-        self.photo = {"sub": sub, "t0": time.monotonic(), "quality": quality,
-                      "waiters": [(addr, req_id)]}
+        now = time.monotonic()
+        f["esperan"].append((addr, req_id, quality, now))
+        f["t_pedido"] = now
+        if f["sub"] is None:
+            comprimida = f["topic"].endswith("/compressed")
+            tipo = CompressedImage if comprimida else Image
+            f["sub"] = self.create_subscription(tipo, f["topic"], lambda m, c=camara: self.on_image(c, m),
+                                                qos_profile_sensor_data)
+            self.get_logger().info(f"Camara {f['topic']}: suscripcion abierta")
 
-    def on_image(self, msg):
-        if self.photo is None:
-            return
-        photo, self.photo = self.photo, None
-        self.destroy_subscription(photo["sub"])
+    def on_image(self, camara, msg):
+        f = self.fotos[camara]
+        if not f["esperan"]:
+            return                                             # suscripcion abierta esperando el proximo pedido
+        esperan, f["esperan"] = f["esperan"], []
+        quality = max(q for _, _, q, _ in esperan)
         try:
-            import cv2
-            from cv_bridge import CvBridge
-            img = CvBridge().imgmsg_to_cv2(msg, desired_encoding="bgr8")
-            ok, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, photo["quality"]])
-            if not ok:
-                raise RuntimeError("cv2.imencode fallo")
-            data = jpeg.tobytes()
+            data, ancho, alto = self.encode(msg, quality, f["max_w"])
         except Exception as e:
-            for addr, req_id in photo["waiters"]:
+            for addr, req_id, _, _ in esperan:
                 self.reply(addr, req_id, False, f"error al codificar la imagen: {e}")
             return
-        for addr, req_id in photo["waiters"]:
+        for addr, req_id, _, _ in esperan:
             for chunk in P.pack_img_chunks(self.token, req_id, data):
                 self.send(chunk, addr)
-        self.get_logger().info(f"Foto {img.shape[1]}x{img.shape[0]} ({len(data) // 1024} KB) enviada")
+        self.log_every(("foto", camara), 10.0, f"Foto {ancho}x{alto} ({len(data) // 1024} KB) enviada")
+
+    @staticmethod
+    def encode(msg, quality, max_w=0):
+        """Mensaje de imagen de ROS -> (JPEG, ancho, alto). Un JPEG ya comprimido que no hay que achicar
+        se reenvia tal cual (sin decodificar en la Raspberry)."""
+        import cv2
+        if isinstance(msg, CompressedImage):
+            data = bytes(msg.data)
+            if "jpeg" in msg.format.lower() and not max_w:
+                return data, 0, 0
+            img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+            if img is None:
+                raise RuntimeError(f"no se pudo decodificar ({msg.format})")
+        else:
+            img = imgmsg_a_bgr(msg)
+        if max_w and img.shape[1] > max_w:
+            img = cv2.resize(img, (max_w, int(img.shape[0] * max_w / img.shape[1])), interpolation=cv2.INTER_AREA)
+        ok, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, int(quality)])
+        if not ok:
+            raise RuntimeError("cv2.imencode fallo")
+        return jpeg.tobytes(), img.shape[1], img.shape[0]
 
     def check_photo_timeout(self):
-        if self.photo is None or time.monotonic() - self.photo["t0"] < PHOTO_TIMEOUT:
-            return
-        photo, self.photo = self.photo, None
-        self.destroy_subscription(photo["sub"])
-        msg = "sin imagen de la camara (en el dock esta apagada por power_saver)"
-        for addr, req_id in photo["waiters"]:
-            self.reply(addr, req_id, False, msg)
+        now = time.monotonic()
+        for camara, f in self.fotos.items():
+            vencidas = [e for e in f["esperan"] if now - e[3] > PHOTO_TIMEOUT]
+            if vencidas:
+                f["esperan"] = [e for e in f["esperan"] if now - e[3] <= PHOTO_TIMEOUT]
+                msg = (f"sin imagen de {f['topic']} (en el dock la camara esta apagada por power_saver"
+                       + ("; para HD lanza la camara con task-a/camara/camara_rgb.sh --hd)" if camara == P.HD else ")"))
+                for addr, req_id, _, _ in vencidas:
+                    self.reply(addr, req_id, False, msg)
+            if f["sub"] is not None and not f["esperan"] and now - f["t_pedido"] > self.args.foto_mantener:
+                self.destroy_subscription(f["sub"])
+                f["sub"] = None
+                self.get_logger().info(f"Camara {f['topic']}: suscripcion cerrada (sin pedidos)")
 
     # ---------- dock / undock ----------
 
@@ -349,7 +405,12 @@ def main():
     ap.add_argument("--cmd-timeout", type=float, default=0.3, help="s sin comandos -> parar")
     ap.add_argument("--lidar-offset-deg", type=float, default=90.0,
                     help="giro de rplidar_link respecto a base_link (TF medido: +90)")
-    ap.add_argument("--image-topic", default="/oakd/rgb/preview/image_raw")
+    ap.add_argument("--image-topic", default="/oakd/rgb/preview/image_raw", help="camara de las fotos normales")
+    ap.add_argument("--hd-topic", default="/oakd/rgb/image_raw",
+                    help="camara de las fotos HD (Image, o CompressedImage si termina en /compressed)")
+    ap.add_argument("--hd-width", type=int, default=1280, help="ancho maximo de las fotos HD (0 = sin achicar)")
+    ap.add_argument("--foto-mantener", type=float, default=3.0,
+                    help="s que la suscripcion a la camara sigue abierta despues del ultimo pedido")
     args = ap.parse_args()
 
     rclpy.init()
