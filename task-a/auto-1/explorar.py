@@ -98,13 +98,65 @@ def draw(engine, ex, trail, status, hz, scan, view, show_scan, watcher=None):
     return img
 
 
+def guardar_mapa(engine, carpeta, size_m, ultimo=True):
+    """Guarda el mapa del SLAM en <carpeta>/<fecha>/ y, si `ultimo`, tambien en <carpeta>/ultimo/
+    (el que carga --mapa ultimo). Devuelve la carpeta con fecha."""
+    import json
+    import shutil
+    raw = engine.map_image()
+    dest = Path(carpeta) / time.strftime("%Y%m%d_%H%M%S")
+    dest.mkdir(parents=True, exist_ok=True)
+    np.save(dest / "mapa.npy", raw)
+    cv2.imwrite(str(dest / "mapa.png"), np.flipud(raw))
+    (dest / "mapa.json").write_text(json.dumps({
+        "pixels": int(raw.shape[0]), "tamano_m": size_m, "metros_por_pixel": size_m / raw.shape[0],
+        "origen": "centro = punto A (donde arranco el robot), x adelante, y izquierda",
+        "nota": "para reutilizarlo, el robot debe arrancar en el MISMO punto A y con la MISMA orientacion"}, indent=2))
+    if ultimo:
+        u = Path(carpeta) / "ultimo"
+        shutil.rmtree(u, ignore_errors=True)
+        shutil.copytree(dest, u)
+    print(f"[ok] mapa guardado en {dest}" + (f" (y en {Path(carpeta) / 'ultimo'})" if ultimo else ""))
+    return dest
+
+
+def cargar_mapa(ruta, carpeta, pixels):
+    """--mapa ultimo | <carpeta con mapa.npy> | <archivo .npy>."""
+    p = Path(carpeta) / "ultimo" if ruta == "ultimo" else Path(ruta)
+    if p.is_dir():
+        p = p / "mapa.npy"
+    if not p.exists():
+        sys.exit(f"[error] no encuentro el mapa {p}. Primero haz un intento de mapeo (ver README).")
+    m = np.load(p)
+    if m.shape != (pixels, pixels):
+        sys.exit(f"[error] el mapa {p} es de {m.shape[0]} px y ahora se usan {pixels}: usa el mismo --pixels/--map-m")
+    print(f"[ok] mapa previo cargado: {p}")
+    return m
+
+
+def combinar(prior, live, occ_thr=90, unk=(100, 150)):
+    """Mapa para planificar: el del intento anterior (completo) + lo que el LiDAR ve ahora:
+    paredes/obstaculos nuevos y zonas que el mapa previo no conocia."""
+    out = prior.copy()
+    nuevo = live < occ_thr
+    out[nuevo] = live[nuevo]
+    desconocido = (prior > unk[0]) & (prior < unk[1])
+    out[desconocido] = live[desconocido]
+    return out
+
+
 def run(robot, args, sim=False, gui=True, detect=None, max_time=1800.0, dt=0.15, out_png=None):
     """Bucle principal. Devuelve un resumen. `robot` = TB4Client o SimRobot."""
     engine = make_engine(args.engine, size_m=args.map_m, pixels=args.pixels,
                          sigma_xy_mm=args.sigma_xy, sigma_theta_deg=args.sigma_th)
     planner = Planner(args.map_m, args.pixels, cell=args.cell, robot_radius=args.radio)
     cov = None if args.sin_cobertura else Coverage(planner, fov_deg=args.cam_fov, rng=args.cam_rango)
-    ex = Explorer(planner, cov=cov, vmax=args.vel, volver=args.volver)
+    if getattr(args, "mapas_dir", None) is None:          # los mapas del simulador no se mezclan con los reales
+        args.mapas_dir = str(HERE / ("mapas_sim" if sim else "mapas"))
+    prior = cargar_mapa(args.mapa, args.mapas_dir, args.pixels) if args.mapa else None
+    if prior is not None and cov is None:
+        print("[aviso] --mapa sin cobertura de camara no sirve de nada: quita --sin-cobertura")
+    ex = Explorer(planner, cov=cov, vmax=args.vel, volver=args.volver, inspeccion_directa=prior is not None)
     watcher = FaceWatcher()
     tw = None if sim else ThreadedWatcher(watcher, robot.photo, detect)    # robot real: camara en otro hilo
     if args.go:
@@ -144,7 +196,8 @@ def run(robot, args, sim=False, gui=True, detect=None, max_time=1800.0, dt=0.15,
             lw = watcher.last_ok_t
             cam_ok = (now - lw < 6.0) if lw is not None else (watcher.errors == 0 or now - t_start < 10.0)
 
-            v, w = ex.step(now, engine.map_image(), pos, scan, photos=watcher.photos, cam_ok=cam_ok)
+            mapa = engine.map_image() if prior is None else combinar(prior, engine.map_image())
+            v, w = ex.step(now, mapa, pos, scan, photos=watcher.photos, cam_ok=cam_ok)
             robot.move(v, w)
             if sim:
                 robot.advance(dt)
@@ -192,8 +245,10 @@ def run(robot, args, sim=False, gui=True, detect=None, max_time=1800.0, dt=0.15,
         if out_png and gui is False:
             img = draw(engine, ex, trail, robot.status(), hz, None, args.view, False)
             cv2.imwrite(str(out_png), img)
-        if args.out and not sim:
-            slam_run.save_map(engine, args.out, args.map_m)
+        if not args.no_guardar:
+            # el mapa de un intento de mapeo pasa a ser el "ultimo"; el de una inspeccion (--mapa) se guarda
+            # con fecha pero no lo sustituye (empieza de cero y puede estar incompleto)
+            guardar_mapa(engine, args.mapas_dir, args.map_m, ultimo=prior is None)
         if gui:
             cv2.destroyAllWindows()
     return summary
@@ -222,9 +277,16 @@ def parse(argv=None):
     ap.add_argument("--pixels", type=int, default=500)
     ap.add_argument("--view", type=int, default=1000, help="tamano de la ventana en px")
     ap.add_argument("--max-time", type=float, default=1800.0, help="s maximos antes de rendirse")
-    ap.add_argument("--out", default=str(HERE.parent / "slam-1" / "mapas"))
+    ap.add_argument("--out", default=str(HERE.parent / "slam-1" / "mapas"), help="carpeta de la tecla m")
+    ap.add_argument("--mapa", nargs="?", const="ultimo", default=None,
+                    help="intentos 2 y 3: carga el mapa de un intento anterior (por defecto el ultimo) e inspecciona "
+                         "directamente. El robot debe arrancar en el MISMO punto A y orientacion")
+    ap.add_argument("--mapas-dir", default=None, help="donde se guardan/cargan los mapas (defecto task-a/auto-1/mapas)")
+    ap.add_argument("--no-guardar", action="store_true", help="no guardar el mapa al terminar")
     ap.add_argument("--ruido", type=float, default=0.0, help="(--sim) ruido de odometria")
     ap.add_argument("--sesgo", type=float, default=0.0, help="(--sim) error sistematico de odometria, p. ej. 0.05")
+    ap.add_argument("--score", type=float, default=0.8, help="confianza minima del detector de caras (defecto 0.8)")
+    ap.add_argument("--min-ancho", type=float, default=24, help="ancho minimo de la cara en px de 250 (defecto 24)")
     ap.add_argument("--png", default=None, help="(--sim --no-gui) guardar la imagen final del mapa")
     return ap.parse_args(argv)
 
@@ -232,6 +294,8 @@ def parse(argv=None):
 def main():
     args = parse()
     args.vel = min(args.vel, 0.20)                       # tope de seguridad
+    if args.mapas_dir is None:                           # los mapas del simulador no se mezclan con los reales
+        args.mapas_dir = str(HERE / ("mapas_sim" if args.sim else "mapas"))
     if args.sim:
         from sim import SimRobot
         robot = SimRobot(world=args.mundo, odom_noise=args.ruido, odom_bias=args.sesgo, cam_fov_deg=args.cam_fov,
@@ -240,7 +304,7 @@ def main():
         res = run(robot, args, sim=True, gui=not args.no_gui, detect=detect, max_time=args.max_time, out_png=args.png)
     else:
         from tb4 import TB4Client
-        detect = FaceDetector()
+        detect = FaceDetector(score=args.score, min_width=args.min_ancho)
         with TB4Client(args.ip) as robot:
             robot.wait_ready(8)
             if args.undock:

@@ -382,5 +382,57 @@ class TestSim(unittest.TestCase):
         self.assertFalse(r.face_visible())
 
 
+class TestIntentos(unittest.TestCase):
+    """Estrategia de 3 intentos: el 1 mapea y guarda; el 2 y el 3 cargan el mapa e inspeccionan."""
+
+    def test_combinar_mapa_previo_y_vivo(self):
+        import explorar
+        prior = corridor_map()
+        live = np.full((N, N), 127, np.uint8)
+        live[px(0.5), px(1.5)] = 0                               # obstaculo nuevo (no estaba en el intento 1)
+        live[px(5.0), px(5.0)] = 255                             # zona que el mapa previo no conocia
+        out = explorar.combinar(prior, live)
+        self.assertEqual(out[px(0.5), px(1.5)], 0)
+        self.assertEqual(out[px(5.0), px(5.0)], 255)
+        self.assertEqual(out[px(0.0), px(0.0)], 255)             # lo libre del mapa previo se conserva
+        self.assertEqual(out[px(-1) - 1, px(1)], 0)              # y sus paredes tambien
+
+    def test_guardar_y_cargar_ultimo(self):
+        import tempfile
+
+        import explorar
+
+        class Eng:
+            def map_image(self):
+                return corridor_map()
+        with tempfile.TemporaryDirectory() as d:
+            explorar.guardar_mapa(Eng(), d, SIZE)
+            m = explorar.cargar_mapa("ultimo", d, N)
+            self.assertTrue(np.array_equal(m, corridor_map()))
+            antes = (Path(d) / "ultimo" / "mapa.npy").stat().st_mtime_ns
+
+            class Vacio:
+                def map_image(self):
+                    return np.full((N, N), 127, np.uint8)
+            explorar.guardar_mapa(Vacio(), d, SIZE, ultimo=False)   # una inspeccion no pisa el "ultimo"
+            self.assertEqual((Path(d) / "ultimo" / "mapa.npy").stat().st_mtime_ns, antes)
+            self.assertTrue(np.array_equal(explorar.cargar_mapa("ultimo", d, N), corridor_map()))
+
+    def test_inspeccion_directa_salta_la_exploracion(self):
+        pl = Planner(SIZE, N)
+        e = Explorer(pl, cov=Coverage(pl), inspeccion_directa=True)
+        e.start()
+        self.assertEqual(e.state, INSPECCIONAR)
+        e.pause()
+        e.start()                                                # al reanudar sigue inspeccionando
+        self.assertEqual(e.state, INSPECCIONAR)
+
+    def test_sin_mapa_previo_explora_como_siempre(self):
+        pl = Planner(SIZE, N)
+        e = Explorer(pl, cov=Coverage(pl))
+        e.start()
+        self.assertEqual(e.state, EXPLORAR)
+
+
 if __name__ == "__main__":
     unittest.main()

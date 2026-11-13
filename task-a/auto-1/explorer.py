@@ -47,8 +47,11 @@ def front_clear(scan, half=0.22):
 
 class Explorer:
     def __init__(self, planner: Planner, cov=None, vmax=0.12, wmax=0.8, lookahead=0.35, replan_s=1.0,
-                 stop_front=0.34, volver=False, sweep_timeout=30.0):
+                 stop_front=0.34, volver=False, sweep_timeout=30.0, inspeccion_directa=False):
         self.pl, self.cov = planner, cov
+        # True cuando ya hay un mapa completo de un intento anterior (--mapa): se salta la exploracion
+        # por fronteras y va directo a los puntos de vista para que la camara mire todas las superficies
+        self.inspeccion_directa = inspeccion_directa and cov is not None
         self.vmax, self.wmax, self.look = vmax, wmax, lookahead
         self.replan_s, self.stop_front = replan_s, stop_front
         self.volver = volver
@@ -76,6 +79,10 @@ class Explorer:
     # ---------- control externo ----------
     def start(self):
         if self.state == PAUSA:
+            if self.inspeccion_directa:
+                self.state = INSPECCIONAR
+                self._note("mapa previo cargado: inspeccion directa")
+                return
             self.state = EXPLORAR
             self._want_sweep = self.cov is not None          # mirada inicial de 360 grados desde A
 
