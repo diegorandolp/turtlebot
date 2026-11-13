@@ -21,7 +21,7 @@ import numpy as np
 
 from .degradar import iou, simular_camara
 from .galeria import construir, fotos_por_persona
-from .rostros import ROSTROS, Detector, Embebedor, Votacion, peso_por_tamano, Reconocedor, alinear
+from .rostros import ROSTROS, Detector, Embebedor, Reconocedor, Votacion, peso_por_tamano
 
 
 def es_frontal(cara, tol=0.22):
