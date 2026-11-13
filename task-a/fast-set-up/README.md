@@ -9,7 +9,7 @@ Todo desde `repo/turtlebot`, con tu entorno de Python activado.
 2. Entorno de Python (3.10+). Elige **uno** de los dos:
 
 ```bash
-sudo apt install sshpass build-essential python3-dev    # sshpass: no escribir la contraseña del robot 100 veces
+sudo apt install sshpass build-essential python3-dev python3-venv   # sshpass: no escribir la contraseña del robot 100 veces
 BREEZY="git+https://github.com/simondlevy/BreezySLAM.git#subdirectory=python"
 
 # con pip
@@ -53,8 +53,12 @@ Si **no responde**, la IP pudo cambiar. Búscalo por su MAC:
 
 ```bash
 for i in $(seq 1 254); do ping -c1 -W1 192.168.0.$i >/dev/null & done; wait
-ip neigh | grep -i d8:3a:dd:7e:5e:48                     # la IP de esa línea es la del robot
+IP=$(ip neigh | grep -i d8:3a:dd:7e:5e:48 | awk '{print $1}' | head -1)
+echo "robot en: $IP"                                     # vacío = no lo encontró (¿está encendido?)
+ping -c 3 $IP
 ```
+
+Si la IP cambió, usa la nueva en **todos** los comandos de abajo (también en los de la sección 3).
 
 Tras **encender** el robot (solo una persona, tarda ~5 min):
 
@@ -79,7 +83,8 @@ Si sigue sin imagen: reconecta el cable USB de la cámara y repite `camara_rgb.s
 ## 3. Experimentos
 
 Hay que decir a quién buscar con `--buscar`: el nombre **exacto** de su carpeta en `data/rostros`
-(míralos con `ls data/rostros`). La primera vez tarda ~45 s en procesar la galería; después es instantáneo.
+(míralos con `ls data/rostros`; si tiene espacio, entre comillas: `--buscar "Brigitte Rojas"`).
+La primera vez tarda ~1 min en procesar la galería; después es instantáneo.
 
 Ejemplo completo: robot en `192.168.0.104`, buscando a `Melisa_Rivera`, saliendo del dock.
 
