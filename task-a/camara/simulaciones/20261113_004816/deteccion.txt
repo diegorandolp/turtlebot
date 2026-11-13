@@ -1,0 +1,61 @@
+d=0.40 m  Sergio_Cortez        score=0.91 ancho=24px
+d=0.40 m  Sofia_Salazar        score=0.86 ancho=44px
+d=0.40 m  Alvaro_García        score=0.94 ancho=90px
+d=0.40 m  Jean_Huaylla         score=0.90 ancho=59px
+d=0.40 m  Manuel_Silva         score=0.93 ancho=67px
+d=0.40 m  Luis_Izaguirre       score=0.90 ancho=30px
+d=0.40 m  Lando_Veramendi      score=0.92 ancho=58px
+d=0.40 m  Thiago_Frias         score=0.91 ancho=50px
+--> 0.40 m: robot 7/8, umbral bajo 8/8
+
+d=0.60 m  Sergio_Cortez        score=0.86 ancho=17px
+d=0.60 m  Sofia_Salazar        score=0.88 ancho=31px
+d=0.60 m  Alvaro_García        score=0.93 ancho=59px
+d=0.60 m  Jean_Huaylla         score=0.90 ancho=37px
+d=0.60 m  Manuel_Silva         score=0.93 ancho=44px
+d=0.60 m  Luis_Izaguirre       score=0.87 ancho=21px
+d=0.60 m  Lando_Veramendi      score=0.92 ancho=39px
+d=0.60 m  Thiago_Frias         score=0.92 ancho=34px
+--> 0.60 m: robot 6/8, umbral bajo 8/8
+
+d=0.80 m  Sergio_Cortez        score=0.84 ancho=12px
+d=0.80 m  Sofia_Salazar        score=0.84 ancho=23px
+d=0.80 m  Alvaro_García        score=0.93 ancho=42px
+d=0.80 m  Jean_Huaylla         score=0.91 ancho=31px
+d=0.80 m  Manuel_Silva         score=0.93 ancho=33px
+d=0.80 m  Luis_Izaguirre       score=0.83 ancho=17px
+d=0.80 m  Lando_Veramendi      score=0.92 ancho=29px
+d=0.80 m  Thiago_Frias         score=0.91 ancho=25px
+--> 0.80 m: robot 5/8, umbral bajo 8/8
+
+d=1.00 m  Sergio_Cortez        score=0.80 ancho=10px
+d=1.00 m  Sofia_Salazar        score=0.77 ancho=18px
+d=1.00 m  Alvaro_García        score=0.93 ancho=35px
+d=1.00 m  Jean_Huaylla         score=0.86 ancho=24px
+d=1.00 m  Manuel_Silva         score=0.91 ancho=26px
+d=1.00 m  Luis_Izaguirre       score=0.79 ancho=15px
+d=1.00 m  Lando_Veramendi      score=0.91 ancho=21px
+d=1.00 m  Thiago_Frias         score=0.89 ancho=21px
+--> 1.00 m: robot 3/8, umbral bajo 8/8
+
+d=1.50 m  Sergio_Cortez        score=0.55 ancho=9px
+d=1.50 m  Sofia_Salazar        score=0.54 ancho=16px
+d=1.50 m  Alvaro_García        score=0.90 ancho=23px
+d=1.50 m  Jean_Huaylla         score=0.81 ancho=17px
+d=1.50 m  Manuel_Silva         score=0.86 ancho=18px
+d=1.50 m  Luis_Izaguirre       score=0.75 ancho=11px
+d=1.50 m  Lando_Veramendi      score=0.86 ancho=15px
+d=1.50 m  Thiago_Frias         score=0.85 ancho=13px
+--> 1.50 m: robot 0/8, umbral bajo 8/8
+
+d=2.00 m  Sergio_Cortez        sin cara
+d=2.00 m  Sofia_Salazar        sin cara
+d=2.00 m  Alvaro_García        score=0.77 ancho=18px
+d=2.00 m  Jean_Huaylla         score=0.66 ancho=14px
+d=2.00 m  Manuel_Silva         score=0.81 ancho=15px
+d=2.00 m  Luis_Izaguirre       score=0.50 ancho=8px
+d=2.00 m  Lando_Veramendi      sin cara
+d=2.00 m  Thiago_Frias         score=0.76 ancho=10px
+--> 2.00 m: robot 0/8, umbral bajo 5/8
+
+{'distancias': [0.4, 0.6, 0.8, 1.0, 1.5, 2.0], 'personas': 8, 'fov': 42.0, 'ancho_foto': 0.2, 'angulo': 0.0, 'desplazamiento': [0.0, 0.0], 'score': 0.8, 'min_ancho': 24, 'semilla': 0, 'data': '/home/pollin/ciclo9/vcrp/proyecto/repo/turtlebot/data/rostros', 'out': '/home/pollin/ciclo9/vcrp/proyecto/repo/turtlebot/task-a/camara/simulaciones'}

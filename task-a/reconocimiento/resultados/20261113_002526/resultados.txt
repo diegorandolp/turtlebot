@@ -1,0 +1,53 @@
+ronda  1 OK    objetivo=Jean_Huaylla         elegida=Jean_Huaylla         angel_mora=0.15 Brigitte Rojas=0.26 Jean_Huaylla=0.78 Diego_Quispe=0.29
+ronda  2 OK    objetivo=Alvaro_García        elegida=Alvaro_García        Lando_Veramendi=0.22 Marcelino_Maita=0.13 Sergio_Cortez=0.18 Alvaro_García=0.68
+ronda  3 OK    objetivo=Alvaro_García        elegida=Alvaro_García        angel_mora=0.15 Manuel_Silva=0.17 Melisa_Rivera=0.24 Alvaro_García=0.68
+ronda  4 OK    objetivo=Steve_Ricapa         elegida=Steve_Ricapa         Franklin_Soncco=0.28 Thiago_Frias=0.35 Steve_Ricapa=0.70 Manuel_Silva=0.23
+ronda  5 OK    objetivo=Franklin_Soncco      elegida=Franklin_Soncco      Juan_Prochazka=0.06 Franklin_Soncco=0.85 Melisa_Rivera=0.23 Mishelle_Villarreal=0.32
+ronda  6 OK    objetivo=Marcelino_Maita      elegida=Marcelino_Maita      Thiago_Frias=0.24 angel_mora=0.37 Marcelino_Maita=0.75 Luis_Izaguirre=0.35
+ronda  7 OK    objetivo=Sofia_Salazar        elegida=Sofia_Salazar        Thiago_Frias=0.24 Juan_Prochazka=0.39 Manuel_Silva=-0.06 Sofia_Salazar=0.59
+ronda  8 OK    objetivo=Mishelle_Villarreal  elegida=Mishelle_Villarreal  Thiago_Frias=0.12 Mishelle_Villarreal=0.72 angel_mora=0.31 Alvaro_García=0.25
+ronda  9 OK    objetivo=Juan_Prochazka       elegida=Juan_Prochazka       Juan_Prochazka=0.80 Luis_Izaguirre=0.32 Alvaro_García=0.10 Sergio_Cortez=0.35
+ronda 10 OK    objetivo=Mishelle_Villarreal  elegida=Mishelle_Villarreal  Jean_Huaylla=0.25 Mishelle_Villarreal=0.96 Thiago_Frias=0.12 Steve_Ricapa=0.36
+ronda 11 OK    objetivo=Sofia_Salazar        elegida=Sofia_Salazar        Sofia_Salazar=0.59 Luis_Izaguirre=0.27 Brigitte Rojas=0.32 angel_mora=0.15
+ronda 12 OK    objetivo=Sofia_Salazar        elegida=Sofia_Salazar        Mishelle_Villarreal=0.28 Sofia_Salazar=0.71 Alvaro_García=0.16 Manuel_Silva=0.13
+ronda 13 OK    objetivo=Luis_Izaguirre       elegida=Luis_Izaguirre       Juan_Prochazka=0.46 Marcelino_Maita=0.31 Manuel_Silva=0.13 Luis_Izaguirre=0.64
+ronda 14 OK    objetivo=Diego_Quispe         elegida=Diego_Quispe         Diego_Quispe=0.64 Luis_Izaguirre=0.15 Thiago_Frias=0.29 Alvaro_García=0.16
+ronda 15 OK    objetivo=Diego_Quispe         elegida=Diego_Quispe         Diego_Quispe=0.74 Jean_Huaylla=0.15 Juan_Prochazka=0.23 angel_mora=0.36
+ronda 16 OK    objetivo=Thiago_Frias         elegida=Thiago_Frias         Brigitte Rojas=0.18 Thiago_Frias=0.88 Alvaro_García=0.15 angel_mora=0.31
+ronda 17 OK    objetivo=Manuel_Silva         elegida=Manuel_Silva         Thiago_Frias=0.20 Marcelino_Maita=0.13 Manuel_Silva=0.83 Lando_Veramendi=0.27
+ronda 18 OK    objetivo=Steve_Ricapa         elegida=Steve_Ricapa         Thiago_Frias=0.35 Manuel_Silva=0.27 Sofia_Salazar=0.16 Steve_Ricapa=0.55
+ronda 19 OK    objetivo=Sofia_Salazar        elegida=Sofia_Salazar        Mishelle_Villarreal=0.31 Brigitte Rojas=0.17 Jean_Huaylla=0.31 Sofia_Salazar=0.71
+ronda 20 OK    objetivo=Marcelino_Maita      elegida=Marcelino_Maita      Juan_Prochazka=0.29 angel_mora=0.42 Lando_Veramendi=0.24 Marcelino_Maita=0.70
+ronda 21 OK    objetivo=Steve_Ricapa         elegida=Steve_Ricapa         Sofia_Salazar=0.30 Steve_Ricapa=0.70 angel_mora=0.41 Juan_Prochazka=0.27
+ronda 22 OK    objetivo=Lando_Veramendi      elegida=Lando_Veramendi      Marcelino_Maita=0.14 Sofia_Salazar=0.12 Lando_Veramendi=0.85 Franklin_Soncco=0.36
+ronda 23 OK    objetivo=Sergio_Cortez        elegida=Sergio_Cortez        Diego_Quispe=0.31 Sergio_Cortez=0.64 Marcelino_Maita=0.37 Alvaro_García=0.25
+ronda 24 OK    objetivo=Manuel_Silva         elegida=Manuel_Silva         Lando_Veramendi=0.41 Sofia_Salazar=0.03 Manuel_Silva=0.88 Franklin_Soncco=0.27
+ronda 25 OK    objetivo=Diego_Quispe         elegida=Diego_Quispe         Diego_Quispe=0.74 Steve_Ricapa=0.33 Jean_Huaylla=0.21 angel_mora=0.30
+ronda 26 OK    objetivo=Melisa_Rivera        elegida=Melisa_Rivera        Jean_Huaylla=0.23 Thiago_Frias=0.39 Franklin_Soncco=0.17 Melisa_Rivera=0.87
+ronda 27 OK    objetivo=Sofia_Salazar        elegida=Sofia_Salazar        Diego_Quispe=0.16 Lando_Veramendi=0.29 Sofia_Salazar=0.71 angel_mora=0.16
+ronda 28 OK    objetivo=Diego_Quispe         elegida=Diego_Quispe         Manuel_Silva=0.29 Jean_Huaylla=0.31 Diego_Quispe=0.74 Juan_Prochazka=0.24
+ronda 29 OK    objetivo=Marcelino_Maita      elegida=Marcelino_Maita      Alvaro_García=0.14 angel_mora=0.37 Melisa_Rivera=0.25 Marcelino_Maita=0.69
+ronda 30 OK    objetivo=Sofia_Salazar        elegida=Sofia_Salazar        Sofia_Salazar=0.71 Brigitte Rojas=0.17 Juan_Prochazka=0.43 Luis_Izaguirre=0.22
+ronda 31 OK    objetivo=Manuel_Silva         elegida=Manuel_Silva         Brigitte Rojas=0.11 Juan_Prochazka=0.14 Thiago_Frias=0.21 Manuel_Silva=0.93
+ronda 32 OK    objetivo=Steve_Ricapa         elegida=Steve_Ricapa         Juan_Prochazka=0.29 Sergio_Cortez=0.25 Steve_Ricapa=0.70 Lando_Veramendi=0.22
+ronda 33 OK    objetivo=Lando_Veramendi      elegida=Lando_Veramendi      Thiago_Frias=0.22 Juan_Prochazka=0.16 Lando_Veramendi=0.79 Melisa_Rivera=0.35
+ronda 34 OK    objetivo=Mishelle_Villarreal  elegida=Mishelle_Villarreal  Jean_Huaylla=0.24 Diego_Quispe=0.28 Mishelle_Villarreal=0.96 Sofia_Salazar=0.32
+ronda 35 OK    objetivo=Marcelino_Maita      elegida=Marcelino_Maita      Brigitte Rojas=0.28 Diego_Quispe=0.15 Marcelino_Maita=0.70 Juan_Prochazka=0.45
+ronda 36 OK    objetivo=Luis_Izaguirre       elegida=Luis_Izaguirre       angel_mora=0.35 Sergio_Cortez=0.44 Alvaro_García=0.23 Luis_Izaguirre=0.64
+ronda 37 OK    objetivo=Alvaro_García        elegida=Alvaro_García        Sergio_Cortez=0.00 angel_mora=0.15 Jean_Huaylla=0.21 Alvaro_García=0.72
+ronda 38 OK    objetivo=Diego_Quispe         elegida=Diego_Quispe         Sergio_Cortez=0.32 Juan_Prochazka=0.27 angel_mora=0.30 Diego_Quispe=0.77
+ronda 39 OK    objetivo=Jean_Huaylla         elegida=Jean_Huaylla         Diego_Quispe=0.34 Manuel_Silva=0.22 Jean_Huaylla=0.78 Lando_Veramendi=0.20
+ronda 40 OK    objetivo=Sofia_Salazar        elegida=Sofia_Salazar        Sofia_Salazar=0.71 Juan_Prochazka=0.45 Alvaro_García=0.19 Mishelle_Villarreal=0.32
+ronda 41 OK    objetivo=Steve_Ricapa         elegida=Steve_Ricapa         Lando_Veramendi=0.39 angel_mora=0.39 Alvaro_García=0.25 Steve_Ricapa=0.70
+ronda 42 OK    objetivo=Alvaro_García        elegida=Alvaro_García        Alvaro_García=0.57 Mishelle_Villarreal=0.17 Juan_Prochazka=0.06 Brigitte Rojas=0.12
+ronda 43 OK    objetivo=Sergio_Cortez        elegida=Sergio_Cortez        Sergio_Cortez=0.77 Marcelino_Maita=0.18 Diego_Quispe=0.30 angel_mora=0.24
+ronda 44 OK    objetivo=angel_mora           elegida=angel_mora           angel_mora=0.75 Steve_Ricapa=0.43 Thiago_Frias=0.34 Melisa_Rivera=0.16
+ronda 45 OK    objetivo=Luis_Izaguirre       elegida=Luis_Izaguirre       Manuel_Silva=0.18 Sofia_Salazar=0.30 Juan_Prochazka=0.45 Luis_Izaguirre=0.72
+ronda 46 OK    objetivo=Juan_Prochazka       elegida=Juan_Prochazka       Lando_Veramendi=0.20 Juan_Prochazka=0.80 Jean_Huaylla=0.36 Steve_Ricapa=0.21
+ronda 47 OK    objetivo=Franklin_Soncco      elegida=Franklin_Soncco      Steve_Ricapa=0.42 Diego_Quispe=0.37 Sergio_Cortez=0.32 Franklin_Soncco=0.85
+ronda 48 OK    objetivo=Mishelle_Villarreal  elegida=Mishelle_Villarreal  Manuel_Silva=0.13 Sofia_Salazar=0.31 Sergio_Cortez=0.21 Mishelle_Villarreal=0.82
+ronda 49 OK    objetivo=Manuel_Silva         elegida=Manuel_Silva         Manuel_Silva=0.88 Thiago_Frias=0.18 Diego_Quispe=0.33 Sergio_Cortez=0.14
+ronda 50 OK    objetivo=Juan_Prochazka       elegida=Juan_Prochazka       Juan_Prochazka=0.61 Melisa_Rivera=0.12 Luis_Izaguirre=0.33 Diego_Quispe=0.24
+
+acierto: 50/50  |  margen medio +0.40, minimo +0.18  |  fotos al azar, semilla 1
+umbral coseno de referencia: 0.363

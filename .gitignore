@@ -21,3 +21,11 @@ SPOILER_carta_de_suicidio_turtlebot2025.txt
 .claude/
 _legacy/
 legacy/
+
+# Datos (fotos de caras de personas reales: no versionar). Solo se sube el script de raw-data/
+data/
+raw-data/*
+!raw-data/descomprimir.sh
+
+# Entornos virtuales de Python (fast-set-up crea .venv/ aqui)
+.venv/

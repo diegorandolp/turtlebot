@@ -1,0 +1,13 @@
+ronda  1 OK    objetivo=Sergio_Cortez        elegida=Sergio_Cortez        Alvaro_García=0.31 Sergio_Cortez=0.77 Sofia_Salazar=0.29 Jean_Huaylla=0.25
+ronda  2 OK    objetivo=angel_mora           elegida=angel_mora           Thiago_Frias=0.33 angel_mora=0.97 Diego_Quispe=0.18 Jean_Huaylla=0.07
+ronda  3 OK    objetivo=Diego_Quispe         elegida=Diego_Quispe         Diego_Quispe=0.73 Manuel_Silva=0.32 Luis_Izaguirre=0.30 Melisa_Rivera=0.24
+ronda  4 OK    objetivo=Steve_Ricapa         elegida=Steve_Ricapa         Sergio_Cortez=0.18 Manuel_Silva=0.15 Alvaro_García=0.28 Steve_Ricapa=0.70
+ronda  5 OK    objetivo=Melisa_Rivera        elegida=Melisa_Rivera        Mishelle_Villarreal=0.35 Juan_Prochazka=0.13 Melisa_Rivera=0.81 Luis_Izaguirre=0.23
+ronda  6 OK    objetivo=Diego_Quispe         elegida=Diego_Quispe         angel_mora=0.30 Diego_Quispe=0.77 Manuel_Silva=0.29 Juan_Prochazka=0.25
+ronda  7 OK    objetivo=Melisa_Rivera        elegida=Melisa_Rivera        Marcelino_Maita=0.09 Lando_Veramendi=0.17 Sergio_Cortez=0.13 Melisa_Rivera=0.87
+ronda  8 OK    objetivo=Melisa_Rivera        elegida=Melisa_Rivera        Diego_Quispe=0.30 Melisa_Rivera=0.71 Luis_Izaguirre=0.23 Jean_Huaylla=0.27
+ronda  9 OK    objetivo=Diego_Quispe         elegida=Diego_Quispe         Diego_Quispe=0.73 Jean_Huaylla=0.29 Steve_Ricapa=0.36 angel_mora=0.36
+ronda 10 OK    objetivo=angel_mora           elegida=angel_mora           angel_mora=0.75 Franklin_Soncco=0.40 Luis_Izaguirre=0.37 Sofia_Salazar=0.24
+
+acierto: 10/10  |  margen medio +0.47, minimo +0.35  |  fotos al azar, semilla 0
+umbral coseno de referencia: 0.363

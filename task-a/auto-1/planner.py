@@ -34,17 +34,27 @@ class PlanResult:
 
 class Planner:
     def __init__(self, size_m=20.0, pixels=500, cell=2, robot_radius=0.20, margin=0.05,
-                 occ_thr=90, free_thr=150, min_frontier_cells=4, wall_pref_m=0.50, wall_pref_w=3.0):
+                 occ_thr=90, free_thr=150, min_frontier_cells=2, wall_pref_m=0.50, wall_pref_w=3.0,
+                 frontera="cercana", rama_peso=1.0):
         self.res = size_m / pixels               # m por pixel del mapa
         self.n = pixels
         self.f = cell                            # pixeles del mapa por celda de planificacion
         self.cres = self.res * cell              # m por celda
         self.m = pixels // cell
-        self.infl = max(1, int(math.ceil((robot_radius + margin) / self.cres)))
+        # redondeo al entero MAS CERCANO (no hacia arriba): con celdas de 8 cm, 0.25 m daba 4 celdas = 0.32 m por
+        # lado y cerraba pasillos de ~0.73 m (laberinto); asi son 3 celdas = 0.24 m (robot real: 0.17 m de radio)
+        self.infl = max(1, int(round((robot_radius + margin) / self.cres)))
         self.occ_thr, self.free_thr = occ_thr, free_thr
         self.min_fr = min_frontier_cells
         self.pref_cells = wall_pref_m / self.cres
         self.pref_w = wall_pref_w
+        # eleccion de la siguiente frontera:
+        #   "cercana": la alcanzable mas cercana (version original; en caminos con dos ramas hace "ping-pong")
+        #   "rama":    camino + rama_peso * distancia a la ULTIMA META alcanzada: termina la rama en la que esta
+        #              antes de cruzar a otra
+        if frontera not in ("cercana", "rama"):
+            raise ValueError(f"frontera desconocida: {frontera}")
+        self.frontera, self.rama_peso = frontera, rama_peso
 
     # ---- conversiones ----
     def to_cell(self, x, y):
@@ -74,14 +84,20 @@ class Planner:
         trav = (free | ((rr - sr) ** 2 + (cc - sc) ** 2 <= (0.30 / self.cres) ** 2)) & ~occ_i & ~occ
         near = cv2.distanceTransform((~occ).astype(np.uint8), cv2.DIST_L2, 3)       # celdas hasta una pared
         extra = np.clip((self.pref_cells - near) / max(self.pref_cells, 1e-6), 0, 1) * self.pref_w
-        # frontera: transitable con vecino desconocido
-        unk_d = cv2.dilate(unk.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
-        fr = trav & unk_d & free
+        # frontera: celda libre con un vecino desconocido EN CRUZ (no en diagonal, para no tomar por puerta lo
+        # desconocido detras de una pared fina). NO se exige que la frontera sea transitable: en un pasillo estrecho
+        # la puerta entera cae dentro del margen de seguridad de sus bordes y nunca seria un destino. La meta es la
+        # celda transitable mas cercana a la frontera; desde ahi el LiDAR ya ve a traves de la puerta.
+        cruz = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], np.uint8)
+        unk_d = cv2.dilate(unk.astype(np.uint8), cruz).astype(bool)
+        fr = unk_d & free
         n, lab, stats, _ = cv2.connectedComponentsWithStats(fr.astype(np.uint8), connectivity=8)
-        valid = np.zeros_like(fr)
+        fr_ok = np.zeros_like(fr)
         for i in range(1, n):
             if stats[i, cv2.CC_STAT_AREA] >= self.min_fr:
-                valid |= lab == i
+                fr_ok |= lab == i
+        k2 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * self.infl + 3, 2 * self.infl + 3))
+        valid = cv2.dilate(fr_ok.astype(np.uint8), k2).astype(bool) & trav        # metas: transitables junto a una frontera
         for bx, by in bad_goals:                          # metas descartadas (inalcanzables / ya visitadas)
             r, c = self.to_cell(bx, by)
             r0, r1, c0, c1 = max(r - 3, 0), min(r + 4, self.m), max(c - 3, 0), min(c + 4, self.m)
@@ -122,8 +138,47 @@ class Planner:
         fxy = np.array([self.to_xy(r, c) for r, c in fr]) if len(fr) else np.zeros((0, 2))
         return PlanResult("ok", pts, pts[-1], fxy, int(valid.sum()), (import_time() - t0) * 1000)
 
-    def plan_explore(self, img, start_xy, prev_goal=None, bad_goals=()):
-        """Ruta a la frontera alcanzable mas cercana (o a la anterior si sigue siendo frontera)."""
+    def _flood(self, trav, extra, start):
+        """Dijkstra completo desde `start` (sin parar en ninguna meta): distancias y padres de todas las celdas."""
+        m = self.m
+        dist = np.full((m, m), np.inf)
+        parent = {}
+        dist[start] = 0.0
+        pq = [(0.0, start)]
+        while pq:
+            d, (r, c) = heapq.heappop(pq)
+            if d > dist[r, c]:
+                continue
+            for dr, dc, w in NEIGH:
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < m and 0 <= nc < m and trav[nr, nc]:
+                    if dr and dc and not (trav[r, nc] and trav[nr, c]):
+                        continue
+                    nd = d + w * (1.0 + extra[nr, nc])
+                    if nd < dist[nr, nc]:
+                        dist[nr, nc] = nd
+                        parent[(nr, nc)] = (r, c)
+                        heapq.heappush(pq, (nd, (nr, nc)))
+        return dist, parent
+
+    def _path_rama(self, trav, extra, valid, start, anchor):
+        """Frontera que minimiza camino + rama_peso * distancia a `anchor` (la ultima meta alcanzada)."""
+        dist, parent = self._flood(trav, extra, start)
+        cand = np.argwhere(valid & np.isfinite(dist))
+        if not len(cand):
+            return None
+        ax, ay = anchor
+        xs, ys = self.to_xy(cand[:, 0], cand[:, 1])
+        score = dist[cand[:, 0], cand[:, 1]] * self.cres + self.rama_peso * np.hypot(xs - ax, ys - ay)
+        goal = tuple(int(v) for v in cand[int(np.argmin(score))])
+        path = [goal]
+        while path[-1] != start:
+            path.append(parent[path[-1]])
+        return path[::-1]
+
+    def plan_explore(self, img, start_xy, prev_goal=None, bad_goals=(), anchor=None):
+        """Ruta a la siguiente frontera (o a la anterior si sigue siendo frontera). Con frontera="rama" y un
+        `anchor` (ultima meta alcanzada), prefiere las fronteras de la misma zona; si no, la mas cercana."""
         import time
         t0 = time.perf_counter()
         trav, extra, valid, start = self.analyse(img, start_xy, bad_goals)
@@ -135,6 +190,8 @@ class Planner:
             near = valid[max(gr - 2, 0):gr + 3, max(gc - 2, 0):gc + 3]
             if near.any():
                 path = self._dijkstra(trav, extra, start, lambda r, c: abs(r - gr) <= 2 and abs(c - gc) <= 2 and valid[r, c])
+        if path is None and self.frontera == "rama" and anchor is not None:
+            path = self._path_rama(trav, extra, valid, start, anchor)
         if path is None:
             path = self._dijkstra(trav, extra, start, lambda r, c: valid[r, c])
         if path is None:

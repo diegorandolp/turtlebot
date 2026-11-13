@@ -13,7 +13,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parents[1]))
 
-from coverage import Coverage                                                     # noqa: E402
+from cobertura import Coverage                                                     # noqa: E402
 from explorer import (BARRIDO, CONFIRMAR, EXPLORAR, HECHO, INSPECCIONAR, PAUSA, SIN_B, VOLVER,   # noqa: E402
                       Explorer)
 from face import FaceWatcher                                                      # noqa: E402
@@ -119,6 +119,22 @@ class TestExplorer(unittest.TestCase):
         self.assertEqual(e.state, HECHO)
         self.assertEqual(e.b_xy, (1.5, 0.2))
 
+    def test_cara_de_otra_persona_sigue_buscando(self):
+        e = self.ex()
+        e.start()
+        e.face_candidate()
+        self.assertEqual(e.state, CONFIRMAR)
+        e.face_otra_persona("Luis", 0.30)                       # el reconocedor dice que no es la buscada
+        self.assertEqual(e.state, EXPLORAR)                      # vuelve a lo que hacia
+        self.assertIsNone(e.b_xy)
+
+    def test_persona_buscada_guarda_el_nombre_y_vuelve(self):
+        e = self.ex(volver=True)
+        e.start()
+        e.face_confirmed((1.0, 0.5, 0.0), nombre="Melisa_Rivera")
+        self.assertEqual(e.state, VOLVER)
+        self.assertEqual(e.nombre, "Melisa_Rivera")
+
     def test_con_volver_regresa_a_A(self):
         e = self.ex(volver=True)
         e.start()
@@ -139,17 +155,33 @@ class TestExplorer(unittest.TestCase):
         e.step(4.0, img, (0.0, 0.0, 0.0), FakeScan())             # 4 s sin fronteras: se rinde
         self.assertEqual(e.state, SIN_B)
 
+    def test_meta_descartada_se_reintenta_antes_de_rendirse(self):
+        """Pasillo unico: si la unica frontera quedo descartada por un atasco, no hay que darla por perdida."""
+        e = self.ex()
+        e.start()
+        img = corridor_map()
+        e.step(0.0, img, (0.0, 0.0, 0.0), FakeScan())             # fija la meta (la unica frontera, al este)
+        # simulamos que atascos descartaron TODA la frontera del extremo este (caso real del pasillo unico)
+        e.bad_goals.extend((x, y) for x in np.arange(1.9, 3.2, 0.2) for y in np.arange(-1.0, 1.05, 0.2))
+        e.goal = None
+        e._invalidate()
+        e.step(1.0, img, (0.0, 0.0, 0.0), FakeScan())             # sin fronteras validas: empieza a esperar
+        e.step(5.0, img, (0.0, 0.0, 0.0), FakeScan())             # pasados 3 s: reintenta en vez de rendirse
+        self.assertNotEqual(e.state, SIN_B)
+        self.assertEqual(e.bad_goals, [])
+        v, w = e.step(5.5, img, (0.0, 0.0, 0.0), FakeScan())     # (antes de los 6 s del detector de atascos)
+        self.assertGreater(v, 0.0)                                # vuelve a ir hacia la frontera
+
     def test_atasco_descarta_meta(self):
         e = self.ex()
         e.start()
         img = corridor_map()
         e.step(0.0, img, (0.0, 0.0, 0.0), FakeScan())            # fija la meta
         goal = e.goal
-        e.step(3.0, img, (0.0, 0.0, 0.0), FakeScan())
-        v, w = e.step(7.0, img, (0.02, 0.0, 0.0), FakeScan())    # 7 s sin avanzar
-        self.assertEqual(v, 0.0)
+        for k in range(1, 35):                                    # bucle a 5 Hz, como el real, sin avanzar
+            v, w = e.step(0.2 * k, img, (0.02, 0.0, 0.0), FakeScan())
+        self.assertEqual(v, 0.0)                                  # a los ~6.8 s: atasco detectado, gira
         self.assertIn(goal, e.bad_goals)
-
 
 class RoomScan:
     """Scan de un cuarto cuadrado [-half, half]^2 (para cobertura): misma interfaz que tb4.client.Scan."""
@@ -380,6 +412,33 @@ class TestSim(unittest.TestCase):
         self.assertTrue(r.face_visible())
         r.wth = math.pi
         self.assertFalse(r.face_visible())
+
+
+class TestFronteraRama(unittest.TestCase):
+    """Estrategia 'rama' frente a 'cercana' en un pasillo con fronteras en los dos extremos."""
+
+    def pasillo(self):
+        img = np.full((N, N), 127, np.uint8)
+        img[px(-0.5):px(0.5), px(-1.5):px(2.5)] = 255            # libre; los dos extremos dan a lo desconocido
+        img[px(-0.5) - 3:px(-0.5), px(-1.5):px(2.5)] = 0         # pared sur
+        img[px(0.5):px(0.5) + 3, px(-1.5):px(2.5)] = 0           # pared norte
+        return img
+
+    def test_cercana_va_al_extremo_mas_proximo(self):
+        res = Planner(SIZE, N, frontera="cercana").plan_explore(self.pasillo(), (-0.3, 0.0), anchor=(3.0, 0.0))
+        self.assertLess(res.goal[0], 0.0)                         # izquierda: a ~1.2 m (la derecha esta a ~2.8 m)
+
+    def test_rama_sigue_hacia_la_ultima_meta(self):
+        res = Planner(SIZE, N, frontera="rama").plan_explore(self.pasillo(), (-0.3, 0.0), anchor=(3.0, 0.0))
+        self.assertGreater(res.goal[0], 1.5)                      # sigue la rama de la derecha, aunque este mas lejos
+
+    def test_rama_sin_ancla_es_como_cercana(self):
+        res = Planner(SIZE, N, frontera="rama").plan_explore(self.pasillo(), (-0.3, 0.0))
+        self.assertLess(res.goal[0], 0.0)
+
+    def test_estrategia_desconocida_falla(self):
+        with self.assertRaises(ValueError):
+            Planner(SIZE, N, frontera="otra")
 
 
 class TestIntentos(unittest.TestCase):
