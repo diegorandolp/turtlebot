@@ -42,6 +42,8 @@ def main():
     ap.add_argument("--score", type=float, default=0.8, help="umbral del detector (defecto 0.8; baja a 0.5 para depurar)")
     ap.add_argument("--min-ancho", type=float, default=24, help="ancho minimo de la cara en px (defecto 24)")
     ap.add_argument("--out", default=str(HERE / "fotos"))
+    ap.add_argument("--hd", action="store_true",
+                    help="fotos HD 1280x720 (necesita el puente nuevo y task-a/camara/camara_rgb.sh --hd)")
     args = ap.parse_args()
 
     det = FaceDetector(score=args.score, min_width=args.min_ancho)
@@ -69,9 +71,10 @@ def main():
         if st.docked:
             print("[!] El robot esta EN EL DOCK: la camara esta apagada. Sacalo (--undock) y repite.")
         n, ok = 0, 0
+        t_fps, n_fps, fps = time.monotonic(), 0, 0.0
         while True:
             try:
-                img = robot.photo()
+                img = robot.photo(hd=True) if args.hd else robot.photo()
             except Exception as e:
                 print(f"[error] {type(e).__name__}: {e}")
                 if args.una:
@@ -79,20 +82,28 @@ def main():
                 time.sleep(1.0)
                 continue
             n += 1
+            n_fps += 1
+            if time.monotonic() - t_fps >= 3.0:                   # fotos por segundo de los ultimos ~3 s
+                fps, t_fps, n_fps = n_fps / (time.monotonic() - t_fps), time.monotonic(), 0
+            if args.hd and n == 1 and img.shape[1] < 600:
+                print(f"[!] pedi HD pero llego {img.shape[1]}x{img.shape[0]}: falta el puente nuevo "
+                      "(robot/deploy_bridge.sh) o la camara con camara_rgb.sh --hd")
             res, caras = anotar(img, det, args.score)
             ok += bool(caras)
+            tam = f"{img.shape[1]}x{img.shape[0]}, {fps:.1f} fotos/s"
             if caras:
-                print(f"foto {n}: CARA  ancho={[round(c[2]) for c in caras]}px  score={[round(c[4], 2) for c in caras]}")
+                print(f"foto {n} ({tam}): CARA  ancho={[round(c[2]) for c in caras]}px  score={[round(c[4], 2) for c in caras]}")
             else:
-                print(f"foto {n}: sin cara  (brillo medio {img.mean():.0f})")
+                print(f"foto {n} ({tam}): sin cara  (brillo medio {img.mean():.0f})")
             if args.una:
                 outdir.mkdir(exist_ok=True)
                 cv2.imwrite(str(outdir / "foto_robot.png"), img)
                 cv2.imwrite(str(outdir / "foto_robot_detectada.png"), res)
                 print("guardadas en", outdir)
                 return
-            cv2.imshow("camara del robot (caja verde = cara)", cv2.resize(res, None, fx=2, fy=2))
-            k = cv2.waitKey(300) & 0xFF
+            escala = 2 if res.shape[1] < 600 else 0.75                     # preview x2, HD a 960 px
+            cv2.imshow("camara del robot (caja verde = cara)", cv2.resize(res, None, fx=escala, fy=escala))
+            k = cv2.waitKey(50 if args.hd else 300) & 0xFF
             if k in (ord("q"), 27):
                 break
             if k == ord("s"):

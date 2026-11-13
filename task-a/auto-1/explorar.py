@@ -222,7 +222,8 @@ def run(robot, args, sim=False, gui=True, detect=None, max_time=1800.0, dt=0.15,
     ex = Explorer(planner, cov=cov, vmax=args.vel, volver=args.volver, inspeccion_directa=prior is not None,
                   estrategia=args.estrategia, mirar_cada=args.mirar_cada)
     watcher = FaceWatcher()
-    tw = None if sim else ThreadedWatcher(watcher, robot.photo, detect)    # robot real: camara en otro hilo
+    foto = (lambda: robot.photo(hd=True)) if getattr(args, "hd", False) else robot.photo
+    tw = None if sim else ThreadedWatcher(watcher, foto, detect)          # robot real: camara en otro hilo
     if args.go:
         ex.start()
     trail, last_rx, hz, t_prev, show_scan, last_photos = [], None, 0.0, None, True, 0
@@ -264,7 +265,8 @@ def run(robot, args, sim=False, gui=True, detect=None, max_time=1800.0, dt=0.15,
                 if detect.n != det_n and scan is not None:
                     det_n = detect.n
                     for caja in list(detect.cajas):
-                        est = estimar_cara(caja, pos, scan, args.cam_fov)
+                        ancho = detect.last.shape[1] if detect.last is not None else 250   # 250 preview, 1280 HD
+                        est = estimar_cara(caja, pos, scan, args.cam_fov, ancho_img=ancho)
                         if est is not None:
                             c, nueva = registro.agregar(*est)
                             if nueva:
@@ -401,7 +403,11 @@ def parse(argv=None):
     ap.add_argument("--engine", choices=("auto", "breezy", "odom"), default="auto")
     ap.add_argument("--sigma-xy", type=float, default=100.0, help="BreezySLAM: busqueda en posicion (mm)")
     ap.add_argument("--sigma-th", type=float, default=20.0, help="BreezySLAM: busqueda en rumbo (grados)")
-    ap.add_argument("--cam-fov", type=float, default=60.0, help="campo de vision horizontal de la camara (grados)")
+    ap.add_argument("--cam-fov", type=float, default=None,
+                    help="campo de vision horizontal de la camara (grados; defecto 60, con --hd 66)")
+    ap.add_argument("--hd", action="store_true",
+                    help="fotos HD 1280x720 (caras ~3 veces mas lejos). Necesita el puente nuevo "
+                         "(robot/deploy_bridge.sh) y la camara con task-a/camara/camara_rgb.sh --hd")
     ap.add_argument("--cam-rango", type=float, default=1.5, help="distancia maxima a la que se detecta una cara/foto (m)")
     ap.add_argument("--sin-cobertura", action="store_true", help="desactiva barridos e inspeccion (solo fronteras)")
     ap.add_argument("--mundo", default="laberinto", help="(--sim) laberinto | lateral | pista (el circuito de la pizarra)")
@@ -421,7 +427,10 @@ def parse(argv=None):
     ap.add_argument("--score", type=float, default=0.8, help="confianza minima del detector de caras (defecto 0.8)")
     ap.add_argument("--min-ancho", type=float, default=24, help="ancho minimo de la cara en px de 250 (defecto 24)")
     ap.add_argument("--png", default=None, help="(--sim --no-gui) guardar la imagen final del mapa")
-    return ap.parse_args(argv)
+    a = ap.parse_args(argv)
+    if a.cam_fov is None:
+        a.cam_fov = 66.0 if a.hd else 60.0
+    return a
 
 
 def main():

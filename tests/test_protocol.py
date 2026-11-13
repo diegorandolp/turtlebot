@@ -66,6 +66,15 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(b"".join(parts[i] for i in range(total)), jpeg)
 
 
+    def test_photo_preview_and_hd(self):
+        _, payload = P.unpack(P.pack_photo(TOKEN, 9, 85), TOKEN)
+        self.assertEqual(P.unpack_photo(payload), (9, 85, P.PREVIEW))
+        self.assertEqual(len(payload), 5)                          # formato original, para puentes viejos
+        _, payload = P.unpack(P.pack_photo(TOKEN, 10, 70, P.HD), TOKEN)
+        self.assertEqual(P.unpack_photo(payload), (10, 70, P.HD))
+        self.assertEqual(P._PHOTO.unpack_from(payload), (10, 70))  # un puente viejo lo lee como preview
+
+
 class GeometryTests(unittest.TestCase):
     def test_lidar_offset_maps_scan_left_to_front(self):
         # El LiDAR del TB4 esta girado +90: su angulo -90 (su derecha) es el frente del robot.

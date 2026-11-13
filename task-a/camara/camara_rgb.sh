@@ -6,6 +6,7 @@
 #
 #   task-a/camara/camara_rgb.sh                 # camara en color + USB 2 (por defecto)
 #   task-a/camara/camara_rgb.sh --usb SUPER     # color en USB 3
+#   task-a/camara/camara_rgb.sh --hd            # ademas publica la imagen grande (1280x720) para fotos HD
 #   task-a/camara/camara_rgb.sh --normal        # vuelve a la camara de siempre (RGBD, config original)
 #   task-a/camara/camara_rgb.sh --estado        # solo mira: proceso, imagenes por segundo, log
 #
@@ -18,9 +19,11 @@ IP="${TB4_IP:-192.168.0.104}"
 TARGET="ubuntu@$IP"
 MODE="rgb"
 USB="HIGH"                       # HIGH = USB 2 (480 Mb/s); SUPER = USB 3
+HD="false"                       # true = publicar /oakd/rgb/image_raw (1280x720) ademas de la preview
 while [ $# -gt 0 ]; do
   case "$1" in
     --usb) USB="$2"; shift 2 ;;
+    --hd) HD="true"; shift ;;
     --normal) MODE="normal"; shift ;;
     --estado) MODE="estado"; shift ;;
     *) echo "Opcion desconocida: $1"; exit 1 ;;
@@ -30,7 +33,7 @@ done
 SSH=(ssh -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new)
 if [ -n "${SSHPASS:-}" ] && command -v sshpass >/dev/null; then SSH=(sshpass -e "${SSH[@]}"); fi
 
-"${SSH[@]}" "$TARGET" "MODE=$MODE USB=$USB bash -s" <<'EOF'
+"${SSH[@]}" "$TARGET" "MODE=$MODE USB=$USB HD=$HD bash -s" <<'EOF'
 set -e
 source /etc/turtlebot4/setup.bash
 DIR=~/tb4_udp/task_a
@@ -61,10 +64,12 @@ if [ "$MODE" = "normal" ]; then
   echo "[..]   lanzando la camara con la configuracion original (RGBD)"
 else
   PARAMS=$DIR/oakd_rgb.yaml
-  # copia de la original cambiando solo: tipo de pipeline -> RGB, velocidad USB -> $USB
+  # copia de la original cambiando solo: tipo de pipeline -> RGB, velocidad USB -> $USB,
+  # y con --hd que publique tambien la imagen grande (i_publish_topic)
   sed -e "s/i_pipeline_type:.*/i_pipeline_type: RGB/" \
-      -e "s/i_usb_speed:.*/i_usb_speed: $USB/" "$ORIG" > "$PARAMS"
-  echo "[..]   lanzando la camara: solo color, USB=$USB (parametros en $PARAMS)"
+      -e "s/i_usb_speed:.*/i_usb_speed: $USB/" \
+      -e "s/i_publish_topic:.*/i_publish_topic: $HD/" "$ORIG" > "$PARAMS"
+  echo "[..]   lanzando la camara: solo color, USB=$USB, HD=$HD (parametros en $PARAMS)"
 fi
 
 nohup bash -c "source /etc/turtlebot4/setup.bash && exec ros2 launch turtlebot4_bringup oakd.launch.py camera:=oakd_lite params_file:=$PARAMS" \
