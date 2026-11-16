@@ -55,6 +55,9 @@ class Config:
     d_temprano: float = 1.3         # m: con `temprano`, volver si ya esta a esto de la foto
     estancado_s: float = 25.0       # s sin pisar sitios nuevos -> EXPLORAR
     reconocer_max_s: float = 6.0    # s quieto frente a la foto antes de decidir con lo que haya
+    px_min_decidir: float = 24.0    # px: sin haber visto la cara al menos asi de grande no se decide por tiempo
+                                    # (con caras de ~14 px el reconocimiento acierta ~80 %): primero acercarse
+    t_limite_decidir: float = 140.0 # s de carrera desde los que se decide con lo que haya (no perder el intento)
     usar_flechas: bool = True
     celda: float = 0.30             # m: celdas del mapa de "ya estuve aqui"
 
@@ -207,6 +210,8 @@ class Carrera:
         self.bloq_frente = False              # copia del estado del freno del puente (misma histeresis)
         self.libre_frente = self.libre_atras = 9.0   # m libres en el pasillo del robot (+-0.20 m)
         self._reversa = -1e9                  # hasta cuando retroceder (salir de un atasco de frente)
+        self.mirada = None                    # mirada.MiradaLateral (mirar paredes de costado en la IDA); None = no
+        self._now, self._fotos = 0.0, 0
 
     # ---------- control externo ----------
     def empezar(self, now, yaw):
@@ -215,6 +220,8 @@ class Carrera:
                 self.t_inicio = now
                 self.h_pref = yaw
                 self.t_nuevo = now
+                if self.mirada is not None:
+                    self.mirada.t_inicio = now
             self.estado = self._antes_pausa
 
     def pausar(self):
@@ -240,6 +247,8 @@ class Carrera:
         if self.estado in BUSCANDO and self.obj.n >= 2:
             self.nota(now, f"cara a {o.dist:.1f} m ({o.px:.0f} px): ACERCAR")
             self.estado = ACERCAR
+            if self.mirada is not None:
+                self.mirada.activa = None                       # deja de mirar al costado: ya la encontro
             self.vista_b = np.array(self._pos[:2], float)       # desde aqui se ve la foto
             self._mejor_b, self.por_mapa = None, False
         return True
@@ -277,7 +286,9 @@ class Carrera:
         self.libre_atras = float(at.min()) if at.size else 9.0
         self.bloq_frente = self.libre_frente < (PUENTE_SUELTA if self.bloq_frente else PUENTE_PARA)
         self._pos = pos
+        self._fotos = fotos
         v, w = self._paso(now, pos, scan, mapa, fotos, cam_ok)
+        self._now = now
         if self.traza is not None:
             self.traza.append((now, self.estado, *pos, self.h_pref, self.phi, v, w))
         return v, w
@@ -285,7 +296,8 @@ class Carrera:
     @property
     def quiere_mapa(self):
         """Si este paso necesita la imagen del mapa (cuesta ~1 ms: solo se pide cuando hace falta)."""
-        return self.estado in (VOLVER, EXPLORAR) or (self.estado == ACERCAR and self.por_mapa)
+        return (self.estado in (VOLVER, EXPLORAR) or (self.estado == ACERCAR and self.por_mapa)
+                or (self.estado == IDA and self.mirada is not None and self.mirada.toca(self._now)))
 
     def _paso(self, now, pos, scan, mapa, fotos, cam_ok):
         x, y, th = pos
@@ -304,7 +316,7 @@ class Carrera:
         if now < self._maniobra[0]:
             return 0.0, self._maniobra[1]
         if self.estado == IDA:
-            return self._ida(now, pos, scan)
+            return self._ida(now, pos, scan, mapa, fotos, cam_ok)
         if self.estado == EXPLORAR:
             return self._explorar(now, pos, scan, mapa, fotos, cam_ok)
         if self.estado == ACERCAR:
@@ -390,8 +402,17 @@ class Carrera:
         self._desvio = (now + 2.5, wrap(th + float(ANGS[k])))
         self.nota(now, f"no avanza: me desvio {math.degrees(ANGS[k]):+.0f} grados ({L[k]:.1f} m libres)")
 
-    def _ida(self, now, pos, scan):
+    def _ida(self, now, pos, scan, mapa=None, fotos=0, cam_ok=True):
         x, y, th = pos
+        if self.mirada is not None and cam_ok and self.mirada.toca(now):
+            r = self.mirada.paso(now, pos, scan, mapa, fotos, self.cfg.wmax)
+            if r is not None:
+                if self.mirada.activa is not None and self.mirada.activa.get("nueva", True):
+                    self.mirada.activa["nueva"] = False
+                    self.nota(now, f"miro al costado ({math.degrees(wrap(self.mirada.activa['obj'] - th)):+.0f} grados): "
+                                   "pared cercana sin mirar de frente")
+                self._prog = None                               # mirar no es estar atascado
+                return r
         # flechas confirmadas cerca: "armar" el giro hacia donde indican (respecto a la direccion de
         # avance) y girar recien cuando aparezca una abertura de ese lado, cerca de la senal
         if self.sen is not None and self.cfg.usar_flechas and now - self.t_flecha > 3.0:
@@ -473,7 +494,7 @@ class Carrera:
                 return self._mover(now, pos, phi, 0.18)
             err = wrap(hacia - pos[2])
             return 0.0, float(np.clip(1.5 * err, -1.0, 1.0)) if abs(err) > 0.15 else 0.9   # mirar alrededor
-        if self.cfg.temprano and self.vot.decidido() and d < self.cfg.d_temprano:
+        if self.cfg.temprano and self._seguro() and d < self.cfg.d_temprano:
             return self._decidir(now, "temprano")
         cerca = d <= self.cfg.d_parada + 0.05 and self.px_extra == 1.0
         grande = o.px >= self.cfg.px_objetivo * self.px_extra and o.t > now - 1.0 and d <= self.cfg.d_max_b
@@ -504,12 +525,28 @@ class Carrera:
         u = u / max(np.linalg.norm(u), 1e-6)
         return tuple(self.obj.xy + 0.7 * u)
 
+    def _seguro(self):
+        """La votacion esta segura: probabilidad >= prob_min (0.97) con evidencia suficiente. NO basta con
+        haber juntado max_fotos: votos de caras lejanas (14-20 px) llegan a 8 enseguida y dejaban decidir con
+        p = 0.7 (de ahi el nombre equivocado del croquis con odometria desviada)."""
+        v = self.vot
+        return v.n >= v.min_fotos and v.peso >= 1.0 and v.lider()[1] >= v.prob_min
+
     def _reconocer(self, now, pos):
         o = self.obj.ultima
-        if self.vot.decidido():
+        if self._seguro():
             return self._decidir(now, "votacion")
         sin_ver = self.obj.visto_hace(now)
         if self.vot.n > 0 and (now - self.t_reconocer > self.cfg.reconocer_max_s or sin_ver > 2.5):
+            t_carrera = now - (self.t_inicio if self.t_inicio is not None else now)
+            if (self.obj.ancho_max < self.cfg.px_min_decidir and self.px_extra == 1.0 and not o.borde_sup
+                    and t_carrera < self.cfg.t_limite_decidir):
+                # solo vio la cara chica: acercarse mas antes de arriesgar el nombre (una vez)
+                self.nota(now, f"cara de solo {self.obj.ancho_max:.0f} px: me acerco mas antes de decidir")
+                self.estado = ACERCAR
+                self.px_extra = 1.5
+                self.t_reconocer = now
+                return 0.0, 0.0
             return self._decidir(now, "tiempo")
         if self.vot.n == 0 and now - self.t_reconocer > self.cfg.reconocer_max_s:
             # nunca se decide sin votos: si no esta pegada al borde de arriba, acercarse mas

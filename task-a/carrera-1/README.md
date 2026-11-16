@@ -150,14 +150,34 @@ mundo pero repetible. Las mismas opciones existen sueltas en `carrera.py --sim`:
 | Mundos | Éxitos | Choques | Tiempo (mediana) |
 |---|---:|---:|---:|
 | `aleatorio:1..10`, con y sin flechas (pasillos) | 20/20 | 0 | 52 s / 58 s |
-| `croquis` + `denso:1..15` (sala de 4×4 m con cajas) | 14/16 | 0 | 32 s (croquis: 48 s) |
-| los mismos con `--duro` | 7/16 | 0 | — |
+| `croquis` + `denso:1..40` (sala de 4×4 m con cajas) | **38/41** (antes 36/41) | 0 | 42 s |
+| los mismos con `--duro` | **36/41** (antes 22/41) | 0 | 35 s |
+
+"Antes" = sin las mejoras del 2026-11-16 (ver *Mejoras*). En las salas que ya se resolvían el tiempo no
+cambia (+0.2 s de media); la mediana sube porque las salas nuevas que ahora se resuelven son las lentas.
 
 - Los 2 fallos normales (`denso:3`, `denso:9`) son de **búsqueda**: B está detrás de un tabique y el robot
   no encuentra el paso angosto antes de los 3 min.
-- Con `--duro` casi todos los fallos son **volver a A**: con la odometría desviada un 2.5–4 % el robot
-  cree que llegó a A pero está a más de 35 cm. Y en `croquis` dijo un **nombre equivocado** (decidió con
-  caras de 14 px desde 2.6 m). Ver *Límites conocidos*.
+- Antes de las mejoras, con `--duro` casi todos los fallos eran **volver a A** (con la odometría desviada
+  un 2.5–4 % el robot creía llegar a A pero estaba a más de 35 cm) y en `croquis` dijo un **nombre
+  equivocado** (decidió con p = 0.73 al juntar 8 fotos de caras chicas). Las dos cosas están corregidas.
+- Fallos que quedan: **búsqueda** `denso:3` y `denso:21` (la foto en la pared de un pasillo angosto que el
+  robot recorre de costado) y **pasos de ~0.48 m con giro cerrado** (`denso:22` al acercarse, `denso:10` y
+  `denso:25` al volver en `--duro`): al salir del paso hay que girar 90° con la pared a 0.4 m y cajas a 0.22 m
+  de cada lado; el robot se detiene y el desvío anti-atasco lo devuelve por donde vino. Se probaron radio
+  más chico, mantener la ruta y desviarse hacia el destino: ninguno cambió el resultado, así que no quedaron.
+
+### Mejoras: volver exacto a A y nombre seguro (2026-11-16)
+
+| Mejora | Archivo | Qué hace |
+|---|---|---|
+| Volver exacto a A | `relocalizar.py` | Al empezar guarda el scan del LiDAR en A. Al volver, cuando el robot cree estar a < 2 m de A, alinea el scan actual con ese (ICP 2D) y corrige dónde está A en el mapa. Solo acepta alineaciones buenas (error medio < 6 cm, > 45 % de puntos emparejados, corrección < 0.8 m y < 30°). ~4 ms por scan (tabla de vecino más cercano). `--sin-relocalizar` lo apaga |
+| Nombre seguro | `navegador.py` (`_seguro`, `_reconocer`) | Decide por votación solo con probabilidad ≥ 0.97: ya no basta con juntar 8 fotos (las caras lejanas llegaban a 8 enseguida). Si se acaba el tiempo de reconocer y nunca vio la cara de ≥ 24 px, se acerca más antes de decidir; desde los 140 s de carrera decide con lo que tenga, para no perder el intento |
+| Plan B mira las paredes de verdad | `mirada.py` (`CoberturaFrontal`) | El explorador del plan B lleva la cuenta de qué paredes miró la cámara. Antes contaba como vista una pared mirada de refilón o de lejos (y el espacio libre delante de la pared la tapaba al dilatar), así que daba la búsqueda por terminada sin haber mirado la pared de la foto. Ahora una pared cuenta solo si una cara de 11 cm se habría visto con ≥ 20 px (ancho ≈ 343 · 0.11 · cos(incidencia) / distancia, incidencia ≤ 60°). +2 salas en normal, +1 en `--duro`, ninguna perdida. `--cobertura-simple` vuelve a la de auto-1 |
+| (opcional) Mirada lateral | `mirada.py` (`MiradaLateral`), `--mirada-desde S` | Desde los S s de carrera, en la ida, gira a mirar paredes cercanas de costado que no se vieron de frente. Con `--mirada-desde 35`: 38/41 en `--duro` (+2) pero pierde `denso:10` en normal y algunas carreras tardan hasta 76 s más. **Apagada por defecto** |
+
+Pruebas: `python -m unittest discover -s task-a/carrera-1 -p "test_mejoras.py"` (12 pruebas: relocalizar,
+decisión del nombre, cobertura frontal).
 
 ## Uso
 
@@ -319,12 +339,12 @@ en C++. La lógica en Python (ventana dinámica, mapa) cuesta poco.
 
 ## Límites conocidos (lo que falta comprobar con el robot real)
 
-- **Odometría y volver a A**: con un error sistemático de la odometría de 2.5–4 % (`--duro`) el robot
-  vuelve a donde *cree* que está A, a más de 35 cm del A real. La Create 3 corrige el giro con su IMU (en
-  la realidad el error debería ser menor), pero hay que medirlo: ir y volver 3 m y ver cuánto se corre.
-  Idea para corregirlo: guardar el scan del LiDAR en A y, al volver, alinear el scan actual con ese.
-- **Nombre equivocado de lejos**: puede decidir con caras de 14 px desde ~2.6 m si no logra acercarse.
-  Con las reglas del laboratorio (buscar a una persona y leer el QR debajo) igual hay que llegar cerca.
+- **Odometría y volver a A**: corregido en simulación con `relocalizar.py` (scan de A alineado al volver).
+  Con el robot real hay que comprobar que la alineación se acepta (el log dice "LiDAR: A esta X m de donde
+  dice la odometria; corrijo") y que A no cambia entre que se guarda el scan y la vuelta (nadie de pie
+  junto a A al empezar: una persona en el scan de referencia empeora la alineación, aunque no la rompe).
+- **Nombre de lejos**: ya no decide por juntar 8 fotos chicas; si se acaba el tiempo sin haber visto la
+  cara de ≥ 24 px, se acerca más. Si la foto está alta y no se puede acercar, a partir de 140 s decide igual.
 
 - **Todo se validó en simulación**, incluido el puente real por ROS 2; nada se probó todavía con el robot.
   Ver [Preparar y probar en el laboratorio](#preparar-y-probar-en-el-laboratorio).

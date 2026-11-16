@@ -39,6 +39,8 @@ from navegador import (ACERCAR, EXPLORAR, HECHO, IDA, PAUSA, RECONOCER, VOLVER, 
                        Carrera, Config)
 from percepcion import CamaraHilo, Objetivo, Percepcion, Senales           # noqa: E402
 from planner import Planner                                                 # noqa: E402  (auto-1)
+from relocalizar import Relocalizador                                      # noqa: E402
+from mirada import CoberturaFrontal, MiradaLateral                         # noqa: E402
 from reconocimiento import Reconocedor, Votacion, peso_por_tamano          # noqa: E402
 from reconocimiento.voz import anunciar                                     # noqa: E402
 from slam_core import make_engine                                           # noqa: E402  (slam-1)
@@ -71,13 +73,16 @@ def armar(args, excluir=()):
     per = Percepcion(rec, DetectorFlechas(color=args.flechas_color), hfov=args.hfov_hd if args.hd else args.hfov)
     engine = make_engine(args.engine, size_m=MAP_M, pixels=MAP_PX)
     pl = Planner(MAP_M, MAP_PX, cell=2, robot_radius=0.17, margin=0.05)
-    cov = Coverage(pl, fov_deg=args.hfov, rng=1.5)
+    frontal = args.mirada_desde is not None or not args.cobertura_simple
+    cov = CoberturaFrontal(pl, fov_deg=args.hfov, rng=1.5) if frontal else Coverage(pl, fov_deg=args.hfov, rng=1.5)
     exp = Explorer(pl, cov=cov, vmax=min(args.vel, 0.22))
     vot = Votacion(rec.nombres)
     cfg = Config(vmax=args.vel, vmax_vuelta=min(0.31, args.vel + 0.02), temprano=args.temprano,
                  usar_flechas=not args.sin_flechas)
     pl_fino = Planner(MAP_M, MAP_PX, cell=2, robot_radius=0.10, margin=0.0)
     nav = Carrera(cfg, pl, vot, Objetivo(vot), Senales(), exp, planner_fino=pl_fino)
+    if args.mirada_desde is not None:
+        nav.mirada = MiradaLateral(cov, desde_s=args.mirada_desde)
     return rec, per, engine, nav, cov
 
 
@@ -212,6 +217,7 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
     cam = None if sim else CamaraHilo(robot, per, lambda: (sens["pos"], sens["scan"], sens["th_scan"], sens["w"]),
                                       hd=args.hd)
     pos_scan, odo_scan = (0.0, 0.0, 0.0), None
+    reloc = None if getattr(args, "sin_relocalizar", False) else Relocalizador()
     pendientes, t_cam, t_scan = [], 0.0, 0.0
     fotos, ultima, last_rx = 0, None, None
     anunciado, t_hecho = False, None
@@ -242,6 +248,18 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
                 engine.update(scan, pose)
                 last_rx = scan.received
                 pos_scan, odo_scan = engine.position(), pose
+                # ---- volver EXACTO a A: scan de referencia en A y alineacion al volver (relocalizar.py) ----
+                if reloc is not None and nav.t_inicio is not None:
+                    if reloc.ref is None and math.hypot(pos_scan[0], pos_scan[1]) < 0.05:
+                        reloc.referencia(scan, pos_scan)
+                    elif nav.estado == VOLVER:
+                        h = reloc.corregir(scan, pos_scan, nav.home)
+                        if h is not None:
+                            dh = math.hypot(h[0] - nav.home[0], h[1] - nav.home[1])
+                            if reloc.n_ok == 1 and dh > 0.05:
+                                nav.nota(now, f"LiDAR: A esta {dh:.2f} m de donde dice la odometria; corrijo")
+                            k = 1.0 if reloc.n_ok == 1 else 0.5
+                            nav.home = (nav.home[0] + k * (h[0] - nav.home[0]), nav.home[1] + k * (h[1] - nav.home[1]))
             # pose actual: la del mapa en el ultimo scan + lo que la odometria movio desde entonces
             pos = componer(pos_scan, odo_scan, pose) if (odo_scan is not None and pose is not None) else pos_scan
             sens.update(pos=pos, th_scan=pos_scan[2], w=pose.w if pose is not None else 0.0)
@@ -267,8 +285,13 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
                     nav.ver_cara(now, o, peso_por_tamano(o.px))
                 for o in flechas:
                     nav.ver_flecha(now, o)
-                if nav.estado == EXPLORAR and scan is not None:
-                    cov.mark(pos, scan)
+                if nav.estado in (IDA, EXPLORAR) and scan is not None:
+                    if isinstance(cov, CoberturaFrontal):
+                        # lo que la camara mira DE FRENTE durante la ida y el plan B: asi el plan B sabe que
+                        # paredes falta mirar (una pared vista de refilon no cuenta: ahi no se ve una cara)
+                        cov.mark(pos, scan, img=engine.map_image())
+                    elif nav.estado == EXPLORAR:
+                        cov.mark(pos, scan)
             # ---- control ----
             mapa = engine.map_image() if nav.quiere_mapa else None
             v, w = nav.paso(now, pos, scan, mapa, fotos, cam_ok, pos_scan=pos_scan)
@@ -393,6 +416,12 @@ def parse(argv=None):
     ap.add_argument("--odom-sesgo", type=float, default=0.0,
                     help="(--sim) error sistematico de la odometria, p. ej. 0.03 = las ruedas miden 3%% de mas")
     ap.add_argument("--odom-ruido", type=float, default=0.01, help="(--sim) ruido de la odometria (defecto 0.01)")
+    ap.add_argument("--cobertura-simple", action="store_true",
+                    help="plan B con la cobertura de auto-1 (cuenta como vista una pared mirada de refilon)")
+    ap.add_argument("--mirada-desde", type=float, default=None,
+                    help="mirar paredes laterales cercanas durante la ida a partir de estos s de carrera")
+    ap.add_argument("--sin-relocalizar", action="store_true",
+                    help="no corregir A con el LiDAR al volver (solo odometria, como antes)")
     return ap.parse_args(argv)
 
 
