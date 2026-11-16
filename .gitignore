@@ -25,5 +25,8 @@ legacy/
 # Datos locales y salidas de las corridas
 datos/*.zip
 task-a/carrera-1/corridas/
+# videos de las corridas (pesan; van al Drive, no al repo)
+*.mp4
+*.avi
 task-a/auto-1/fotos/
 task-a/carrera-1/fotos/

@@ -9,8 +9,12 @@ Uso (desde la raiz del repositorio, con el entorno virtual activado):
   python task-a/carrera-1/carrera.py --undock                   # ROBOT REAL: arranca EN PAUSA; g = empezar
   python task-a/carrera-1/carrera.py --go                       # robot real, empieza sin esperar la tecla
 
+  python task-a/carrera-1/carrera.py --sim --mundo croquis --go --video   # + video del recorrido (MP4)
+
 Teclas (ventana enfocada): g empezar/reanudar · espacio PAUSA (parada inmediata) · q / Esc salir
-Cada corrida queda en task-a/carrera-1/corridas/ (que paso y cuando, para el informe).
+Cada corrida queda en task-a/carrera-1/corridas/ (que paso y cuando, para el informe). Con --video
+tambien el video del recorrido en corridas/videos/ (camara, mapa, vista real y estado), con el robot
+real o en el simulador.
 """
 import argparse
 import json
@@ -38,6 +42,7 @@ from planner import Planner                                                 # no
 from reconocimiento import Reconocedor, Votacion, peso_por_tamano          # noqa: E402
 from reconocimiento.voz import anunciar                                     # noqa: E402
 from slam_core import make_engine                                           # noqa: E402  (slam-1)
+from video import Grabador, ruta_auto                                       # noqa: E402
 
 MAP_M, MAP_PX = 20.0, 500
 COLORES = {PAUSA: (0, 200, 255), IDA: (0, 255, 0), ACERCAR: (255, 0, 255), RECONOCER: (255, 0, 255),
@@ -173,6 +178,25 @@ def ventana(engine, nav, pos, ultima, robot, sim, t_rel, camtxt):
     return out
 
 
+def cuadro_video(vista, robot, sim, v, w, choques_previos=0):
+    """La ventana + lo que importa al revisar el video: choques (y un borde rojo mientras choca), el freno
+    del puente y la velocidad pedida."""
+    out = vista.copy()
+    h, W = out.shape[:2]
+    txt = f"v={v:+.2f} m/s  w={w:+.2f} rad/s"
+    if sim:
+        choques = robot.collisions - choques_previos
+        frena = bool(robot.flags & 1)                                   # FLAG_FRONT_BLOCKED del puente
+        col = (0, 0, 255) if choques else (0, 200, 0)
+        cv2.putText(out, f"CHOQUES {choques}", (W - 230, h - 44), cv2.FONT_HERSHEY_SIMPLEX, 0.7, col, 2, cv2.LINE_AA)
+        if frena:
+            cv2.putText(out, "FRENO", (W - 330, h - 44), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2, cv2.LINE_AA)
+        if robot._en_choque:
+            cv2.rectangle(out, (0, 0), (W - 1, h - 1), (0, 0, 255), 8)
+    cv2.putText(out, txt, (W - 330, h - 16), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
+    return out
+
+
 # ---------------------------------------------------------------- bucle
 
 def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
@@ -193,6 +217,12 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
     anunciado, t_hecho = False, None
     t0 = reloj()
     vista = None
+    rec, v, w, pos = None, 0.0, 0.0, (0.0, 0.0, 0.0)
+    if getattr(args, "video", None):
+        destino = args.video
+        if destino == "auto":
+            destino = ruta_auto(HERE / "corridas" / "videos", (mundo.nombre if (sim and mundo) else "robot"))
+        rec = Grabador(destino, fps=args.video_fps, bloquear=sim, h264=not args.video_sin_h264)
     if args.go:
         nav.empezar(t0, 0.0)
     try:
@@ -251,12 +281,15 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
                     print(f"\n==== La persona es {nav.nombre} ====\n", flush=True)
                 else:
                     anunciar(f"La persona es {nav.nombre}")
-            # ---- ventana ----
-            if gui or (args.png and nav.estado == HECHO):
+            # ---- ventana (y video) ----
+            grabar = rec is not None and rec.toca(now)
+            if gui or grabar or (args.png and nav.estado == HECHO):
                 camtxt = (f"fotos {fotos}" + ("" if sim else f", errores {cam.errores} {cam.ultimo_error}")
                           + f"  | flechas vistas {len(nav.sen.lista)}  | sitios {nav.vis.n()}")
                 t_rel = now - (nav.t_inicio if nav.t_inicio is not None else now)
                 vista = ventana(engine, nav, pos, ultima, robot, sim, t_rel, camtxt)
+            if grabar:
+                rec.agregar(cuadro_video(vista, robot, sim, v, w), now)
             if gui:
                 cv2.imshow("carrera-1 (Tarea A)", vista)
                 k = cv2.waitKey(1 if sim else 20) & 0xFF
@@ -287,11 +320,24 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
                 camtxt = f"fotos {fotos}"
                 vista = ventana(engine, nav, engine.position(), ultima, robot, sim, 0.0, camtxt)
             cv2.imwrite(str(args.png), vista)
+        ruta_video = None
+        if rec is not None:
+            try:
+                if nav.estado == HECHO or vista is None:                       # el final con el nombre en grande
+                    t_rel = (nav.t_fin or reloj()) - (nav.t_inicio or t0)
+                    vista = ventana(engine, nav, pos, ultima, robot, sim, t_rel, f"fotos {fotos}")
+                rec.agregar(cuadro_video(vista, robot, sim, 0.0, 0.0), reloj())
+                rec.sostener(2.0)
+                ruta_video = rec.cerrar()
+            except Exception as e:                                             # el video nunca tumba la corrida
+                print(f"[video] {type(e).__name__}: {e}", file=sys.stderr)
     t_ini = nav.t_inicio if nav.t_inicio is not None else t0
     res = dict(estado=nav.estado, nombre=nav.nombre, prob=round(nav.prob, 3),
                tiempo=round((nav.t_fin or reloj()) - t_ini, 2),
                tiempo_b=round(nav.t_b - t_ini, 2) if nav.t_b else None, fotos=fotos,
                flechas=[(s.dir(), s.n, s.usada) for s in nav.sen.lista], log=nav.log)
+    if rec is not None:
+        res["video"] = str(ruta_video) if ruta_video else None
     if nav.traza is not None:
         res["traza"] = [[c if (c is None or isinstance(c, str)) else round(float(c), 3) for c in fila]
                         for fila in nav.traza[::4]]
@@ -332,7 +378,7 @@ def parse(argv=None):
                     help="fotos HD 1280x720: ve la cara y las flechas ~3 veces mas lejos (camara con camara_rgb.sh --hd)")
     ap.add_argument("--hfov-hd", type=float, default=66.0, help="campo de vision horizontal de la foto HD, en grados")
     ap.add_argument("--engine", choices=("auto", "breezy", "odom"), default="odom", help="mapa: odometria (defecto) o BreezySLAM")
-    ap.add_argument("--max-t", type=float, default=300.0, help="s maximos de la corrida")
+    ap.add_argument("--max-t", type=float, default=180.0, help="s maximos de la corrida (el limite del profe: 3 min)")
     ap.add_argument("--cam-periodo", type=float, default=None, help="(--sim) s entre fotos (defecto 0.15, con --hd 0.3)")
     ap.add_argument("--cam-latencia", type=float, default=0.15, help="(--sim) s de retraso de cada foto")
     ap.add_argument("--camara-caida", action="store_true", help="(--sim) la camara no da imagenes")
@@ -340,18 +386,32 @@ def parse(argv=None):
     ap.add_argument("--no-guardar", action="store_true", help="no guardar el registro de la corrida")
     ap.add_argument("--png", default=None, help="guardar la ventana final en esta imagen")
     ap.add_argument("--traza", action="store_true", help="guardar en el registro la traza del navegador (depurar)")
+    ap.add_argument("--video", nargs="?", const="auto", default=None,
+                    help="grabar el video del recorrido (MP4). Sin ruta: corridas/videos/<fecha>_<mundo>.mp4")
+    ap.add_argument("--video-fps", type=float, default=10.0, help="cuadros por segundo del video (defecto 10)")
+    ap.add_argument("--video-sin-h264", action="store_true", help="no convertir a H.264 con ffmpeg (queda MPEG-4)")
+    ap.add_argument("--odom-sesgo", type=float, default=0.0,
+                    help="(--sim) error sistematico de la odometria, p. ej. 0.03 = las ruedas miden 3%% de mas")
+    ap.add_argument("--odom-ruido", type=float, default=0.01, help="(--sim) ruido de la odometria (defecto 0.01)")
     return ap.parse_args(argv)
+
+
+def crear_sim(args):
+    """Mundo y robot simulado segun las opciones (--mundo, --persona, --hd, --odom-*)."""
+    from mundos import construir
+    from simulador import SimRobot
+    mundo = construir(args.mundo, args.persona)
+    robot = SimRobot(mundo, hfov=args.hfov, camara_ok=not args.camara_caida,
+                     foto_hd=(1280, 720, args.hfov_hd) if args.hd else None,
+                     odom_ruido=args.odom_ruido, odom_sesgo=args.odom_sesgo)
+    return mundo, robot
 
 
 def main(argv=None):
     args = parse(argv)
     args.vel = min(args.vel, 0.31)
     if args.sim:
-        from mundos import construir
-        from simulador import SimRobot
-        mundo = construir(args.mundo, args.persona)
-        robot = SimRobot(mundo, hfov=args.hfov, camara_ok=not args.camara_caida,
-                         foto_hd=(1280, 720, args.hfov_hd) if args.hd else None)
+        mundo, robot = crear_sim(args)
         print(f"[sim] mundo {mundo.nombre}: en B esta {mundo.persona} ({mundo.foto_b}, excluida de la galeria)")
         res = correr(robot, args, sim=True, gui=not args.no_gui, mundo=mundo, max_t=args.max_t)
     else:
@@ -365,6 +425,8 @@ def main(argv=None):
             res = correr(robot, args, sim=False, gui=not args.no_gui, max_t=args.max_t)
     if not args.no_guardar:
         print("[ok] registro:", guardar(res))
+    if res.get("video"):
+        print("[ok] video:", res["video"])
     for linea in res.pop("log"):
         print("   ", linea)
     print("[fin]", res)

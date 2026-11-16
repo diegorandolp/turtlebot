@@ -22,12 +22,12 @@ se excluye al reconocer (el reconocedor nunca la vio). Son circuitos de 2–4 tr
 | Decisión arriesgada | Cómo se acota el riesgo |
 |---|---|
 | Velocidad máxima del robot (0.30 m/s ida, 0.31 vuelta) y giros a 1.8 rad/s | Cada paso se prueban 114 arcos de 1.2 s contra el LiDAR (ventana dinámica): ninguno pasa a menos de 20 cm de nada ni mete un obstáculo en la zona de freno del puente en ningún momento. Detrás, el freno del puente |
-| Pasa por huecos angostos (entre cajas, junto a la pared) | Si en 3 s no avanza 6 cm, se desvía 2.5 s hacia el carril más abierto y retoma; si el robot ya quedó pegado a algo, se premian los arcos que lo despegan |
+| Pasa por huecos angostos (entre cajas, junto a la pared) | Si en 3 s no avanza 6 cm, se desvía 2.5 s hacia el carril más abierto y retoma; si quedó **pegado de frente** (el freno del puente no lo deja avanzar), primero **retrocede** ~14 cm por donde vino. Si el robot ya quedó pegado a algo, se premian los arcos que lo despegan. Solo elige carriles de ±0.21 m, tan anchos como el pasillo que vigila el freno del puente (±0.20 m) |
 | Sin barrido inicial ni mapa previo: sale directo por el espacio más abierto | Si 25 s no descubre sitios nuevos, pasa al explorador sistemático de auto-1 (plan B) |
 | Las flechas cambian el rumbo apenas se confirman (2 fotos) | El giro se "arma" y se ejecuta solo cuando aparece una abertura de ese lado cerca de la señal; si no aparece en 12 s, se ignora la flecha |
 | Reconoce **mientras se acerca**, sin detenerse a mirar | Votación entre fotos pesada por tamaño de cara; decide con probabilidad ≥ 0.97 o 8 fotos, **nunca sin votos** |
 | Conjunto cerrado: siempre anuncia a alguien de la galería, nunca "desconocido" | La persona de B es de la clase (confirmado). 0 nombres equivocados en las 120 carreras simuladas |
-| Vuelve por la ruta **más corta** del mapa de la ida (no desanda) | Si el mapa no da ruta o no avanza en 8 s: ruta con margen chico y, si no, el camino de ida acortado con rectas seguras |
+| Vuelve por la ruta **más corta** del mapa de la ida (no desanda) | Si no avanza en 8 s: **desanda la ida punto por punto** (por ahí ya cupo; despacio, sin atajos y sin desvíos), después ruta con margen chico y el camino de ida acortado con rectas seguras |
 | `--temprano`: vuelve apenas sabe quién es (a ≤ 1.3 m de B), sin terminar de acercarse | Desactivado por defecto: no sabemos si el jurado exige llegar más cerca de B |
 | `--hd`: fotos 1280×720 para ver la cara y las flechas ~3 veces más lejos | Desactivado por defecto: no está probado con el robot real (sí en simulación, también por el puente) |
 
@@ -72,7 +72,11 @@ LiDAR (7 Hz) + odometría ─► mapa (slam-1) y "carriles" libres ────�
      últimas detecciones (una mala medida no la arrastra).
    - **RECONOCER**: quieto, centrando la cara, hasta que la votación decide (casi siempre ya decidió en el
      camino). Sin votos no decide: se acerca más.
-   - **VOLVER**: ruta más corta a A (Dijkstra de auto-1 sobre el mapa de la ida), a 0.31 m/s.
+   - **VOLVER**: ruta más corta a A (Dijkstra de auto-1 sobre el mapa de la ida), a 0.31 m/s. Si en 8 s
+     no se acerca, va probando: desandar la ida exacta (0.18 m/s) → mapa con margen chico → ida acortada.
+   - En todos los estados el navegador lleva una **copia del freno del puente** (frena con algo a < 0.28 m
+     en su pasillo de ±0.20 m y no suelta hasta 0.38 m): con el freno puesto no elige arcos que el puente
+     anularía. Antes se quedaba mirando un rumbo bloqueado sin moverse.
    - **HECHO**: en A (a < 22 cm): para, anuncia el nombre en voz alta y en grande en la ventana.
    - **EXPLORAR** (plan B): el explorador de fronteras y cobertura de cámara de auto-1.
 4. **Reconocimiento**: ver [reconocimiento/README.md](../../reconocimiento/README.md) (ArcFace con OpenCV,
@@ -84,7 +88,7 @@ Tres niveles, del más rápido al más completo:
 
 | Nivel | Qué prueba | Comando |
 |---|---|---|
-| Pruebas unitarias | Detector de flechas, carriles, ventana dinámica, estados, simulador, mundos y una carrera completa | `python -m unittest discover -s task-a/carrera-1 -p "test_*.py"` |
+| Pruebas unitarias | Detector de flechas, carriles, ventana dinámica (también con el freno puesto), estados, simulador, mundos, grabador de video y dos carreras completas (`demo` y `croquis` con video) | `python -m unittest discover -s task-a/carrera-1 -p "test_*.py"` |
 | Simulador (`simulador.py`) | La estrategia completa en circuitos aleatorios, con LiDAR, odometría con ruido, freno del puente y **cámara renderizada** (las fotos de B son fotos reales de la galería, excluidas al reconocer) | `python task-a/carrera-1/carrera.py --sim` · `banco_pruebas.py` |
 | Simulación por ROS (`sim_ros.sh`) | El **camino real** del día de la competencia: `carrera.py` en modo robot → UDP → **el puente real** → ROS 2 → el simulador haciendo de robot | `task-a/carrera-1/sim_ros.sh` + `carrera.py 127.0.0.1` |
 
@@ -94,6 +98,66 @@ real, cámara a 13 cm del suelo, desenfoque, ruido y JPEG), así se prueba la vi
 pasillos de 0.95–1.5 m, a veces una rama sin salida, 1–4 obstáculos (cajas y cilindros) y la foto de una
 persona al azar en B; con flechas en cada giro (de estilos variados) o sin ellas. Más allá de las paredes
 se ve "el aula" (rectángulos de colores y patas de mesas), que pone a prueba los falsos positivos.
+
+¿Es 3D? A medias: el mundo es un plano (paredes, cajas y carteles vistos desde arriba) pero cada cosa
+tiene su altura, y la **cámara** sí se ve en perspectiva (raycaster). El **LiDAR y el movimiento son 2D**
+(sin física de ruedas, sin deslizamiento): sirve para encontrar fallos de lógica y comparar estrategias,
+no reemplaza probar en el robot.
+
+### Mundos del laboratorio: `croquis` y `denso:N`
+
+El laboratorio es una sala chica (~4×4 m) **llena de cajas**, no un pasillo. Para eso hay dos mundos más:
+
+| Mundo | Qué es |
+|---|---|
+| `croquis[:W:H]` | El croquis del circuito (dibujo a mano: 9 cajas) estirado a W×H m (defecto 4×4). A abajo a la izquierda mirando a la derecha, la foto de B en la pared derecha abajo (**supuesto**: el dibujo no marca B). El dibujo no está a escala: las cajas que cerrarían el paso se achican |
+| `denso:N[:W:H]` | Sala W×H (defecto 4×4) con 7–11 cajas al azar: cuadradas y tabiques largos, algunas pegadas a la pared. A a la izquierda, B en la pared derecha, a menudo escondida detrás de un tabique |
+
+En los dos **siempre queda un paso de al menos ~0.48 m** de A a B (el robot mide 0.34 m): una caja que lo
+cerraría se achica o se quita.
+
+### Video del recorrido
+
+`--video` graba la ventana en un MP4: la cámara del robot (con caras, nombres y flechas), el mapa, la
+vista real desde arriba (simulador) y la barra de estado, más **CHOQUES N** (y un borde rojo mientras
+choca), **FRENO** cuando el freno del puente no lo deja avanzar, y la velocidad pedida.
+
+```bash
+python task-a/carrera-1/carrera.py --sim --mundo croquis --go --video          # -> corridas/videos/<fecha>_croquis-4-4.mp4
+python task-a/carrera-1/carrera.py --sim --mundo denso:3 --go --no-gui --video mi_video.mp4
+python task-a/carrera-1/carrera.py --undock --video                            # tambien con el robot real
+python task-a/carrera-1/banco_pruebas.py --mundos croquis denso:1 denso:2 --videos videos/   # solo los que fallan o chocan
+python task-a/carrera-1/banco_pruebas.py --n 10 --videos videos/ --videos-todos              # todos
+```
+
+- El video va en **tiempo de la carrera**: 50 s de carrera = 50 s de video, aunque el simulador corra más
+  rápido o más lento que el reloj. Termina con 2 s del cuadro final (el nombre en grande).
+- Funciona **sin ventana** (`--no-gui`). Escribe en otro hilo: con el robot real, si el disco se atrasa
+  pierde cuadros pero nunca frena el control; un error al grabar apaga el video, no la carrera.
+- Sale en H.264 si hay `ffmpeg` en el PATH (se abre en WhatsApp, PowerPoint, el navegador); si no, MPEG-4
+  (`--video-sin-h264` lo fuerza). `--video-fps` (defecto 10).
+- Sirve para el **video obligatorio de la competencia** y para el informe.
+
+### Banco de pruebas en condiciones difíciles: `--duro`
+
+`banco_pruebas.py --duro` corre cada mundo con la odometría con error sistemático (hasta ±4 %) y más
+ruido, la cámara más lenta (una foto cada 0.2–0.35 s) y con más retraso (0.2–0.4 s); distinto en cada
+mundo pero repetible. Las mismas opciones existen sueltas en `carrera.py --sim`: `--odom-sesgo`,
+`--odom-ruido`, `--cam-periodo`, `--cam-latencia`.
+
+### Resultados (simulador, límite de 3 min por carrera)
+
+| Mundos | Éxitos | Choques | Tiempo (mediana) |
+|---|---:|---:|---:|
+| `aleatorio:1..10`, con y sin flechas (pasillos) | 20/20 | 0 | 52 s / 58 s |
+| `croquis` + `denso:1..15` (sala de 4×4 m con cajas) | 14/16 | 0 | 32 s (croquis: 48 s) |
+| los mismos con `--duro` | 7/16 | 0 | — |
+
+- Los 2 fallos normales (`denso:3`, `denso:9`) son de **búsqueda**: B está detrás de un tabique y el robot
+  no encuentra el paso angosto antes de los 3 min.
+- Con `--duro` casi todos los fallos son **volver a A**: con la odometría desviada un 2.5–4 % el robot
+  cree que llegó a A pero está a más de 35 cm. Y en `croquis` dijo un **nombre equivocado** (decidió con
+  caras de 14 px desde 2.6 m). Ver *Límites conocidos*.
 
 ## Uso
 
@@ -136,7 +200,10 @@ A; línea amarilla = rumbo elegido) y, en el simulador, la vista real desde arri
 | `--modelo` | auto | Reconocimiento: `r50` si está instalado, si no `mbf` |
 | `--hfov` / `--hfov-hd` | 40 / 66 | Campo de visión horizontal (grados) de la preview y de la foto HD |
 | `--engine` | odom | Mapa con odometría pura (`breezy` = BreezySLAM, si está instalado) |
-| `--max-t` | 300 | Segundos máximos de la carrera |
+| `--max-t` | 180 | Segundos máximos de la carrera (el límite de la competencia: 3 min) |
+| `--video [ruta]` | no | Grabar el video del recorrido (sin ruta: `corridas/videos/<fecha>_<mundo>.mp4`) |
+| `--video-fps` | 10 | Cuadros por segundo del video |
+| `--odom-sesgo` / `--odom-ruido` | 0 / 0.01 | (`--sim`) Error sistemático y ruido de la odometría |
 
 ## Preparar y probar en el laboratorio
 
@@ -203,18 +270,61 @@ real lo que el simulador supone. Los comandos van desde la raíz del repositorio
 | `percepcion.py` | De cada foto: caras y flechas con rumbo y posición en el mapa; memoria de B y de las señales; cámara en otro hilo (robot real) |
 | `flechas.py` | Detector genérico de flechas (banco de flechas sintéticas) |
 | `simulador.py` | Robot simulado con LiDAR, freno del puente y cámara renderizada (misma API que `TB4Client`) |
-| `mundos.py` | Mundos fijos (`demo`, `demo-sin-flechas`, `sala`) y circuitos aleatorios (`aleatorio:N[:sin]`) |
-| `banco_pruebas.py` | Muchas carreras en paralelo y su resumen |
+| `mundos.py` | Mundos fijos (`demo`, `demo-sin-flechas`, `sala`, `croquis[:W:H]`), circuitos aleatorios (`aleatorio:N[:sin]`) y salas con cajas (`denso:N[:W:H]`) |
+| `banco_pruebas.py` | Muchas carreras en paralelo y su resumen; `--videos` guarda el video de las que fallan o chocan; `--duro` |
+| `video.py` | Grabador del video del recorrido (tiempo de la carrera, en otro hilo, nunca tumba la carrera) |
+| `medir_cpu.py` | Cuánto CPU usa cada pieza: para decidir si todo cabe en la Raspberry del robot |
 | `robot_ros_sim.py`, `sim_ros.sh` | El simulador como robot ROS 2, con el puente real delante |
 | `probar_vision.py` | Ver la percepción en vivo sin mover el robot; guardar fotos para evaluar |
 | `evaluar_flechas.py` | Acierto del detector de flechas sobre carpetas de fotos (izq/der/nada) |
-| `test_carrera.py` | Pruebas sin robot |
+| `test_carrera.py`, `test_video.py` | Pruebas sin robot |
 
 Reutiliza de otras carpetas: el mapa de [slam-1](../slam-1) (`slam_core`), el planificador Dijkstra y el
 explorador de fronteras de [auto-1](../auto-1) (`planner`, `coverage`, `explorer`) y el reconocimiento de
 [reconocimiento/](../../reconocimiento).
 
+## Correr todo en el robot (sin la laptop)
+
+`carrera.py` habla con el robot por UDP; el puente corre en la Raspberry. Para que la carrera corra en el
+robot basta copiar el repositorio a la Raspberry y correrlo contra el puente local, sin ventana:
+
+```bash
+python3 task-a/carrera-1/carrera.py 127.0.0.1 --no-gui --undock      # en la Raspberry, por SSH
+```
+
+El riesgo es el CPU. `medir_cpu.py` mide cada pieza (no necesita robot). En una PC x86 (1 núcleo):
+
+| Pieza | Preview 250×250 | HD 1280×720 |
+|---|---:|---:|
+| Detectar caras (YuNet) | 17 ms | 36 ms |
+| Reconocer una cara (ArcFace mbf) | 35 ms | 38 ms |
+| Detectar flechas | 5 ms | 45 ms |
+| Ventana dinámica (cada paso de control) | 9 ms | 9 ms |
+| Integrar un scan al mapa | 2.5 ms | 2.3 ms |
+| Ruta en el mapa (Dijkstra) | 8 ms | 7 ms |
+| **Carrera a ritmo normal** | **58 % de un núcleo** | **99 % de un núcleo** |
+
+Una Raspberry Pi 4 es varias veces más lenta por núcleo que esa PC (estimación: 3–5×) y ya corre ROS,
+el LiDAR, la cámara y el puente. **Hay que medirlo en el robot** (`python3 task-a/carrera-1/medir_cpu.py`
+por SSH). Si no alcanza, por orden de esfuerzo:
+
+1. Menos fotos por segundo (`--cam-periodo 0.3`) y sin `--hd` salvo para leer el QR de cerca.
+2. Reconocer solo la cara más grande y solo cuando mide lo suficiente (hoy ya es así desde `min_px`).
+3. Repartir en núcleos: la cámara (detectar + reconocer) en otro proceso; la Raspberry tiene 4.
+4. Detectar caras **en la propia cámara**: la OAK-D tiene un chip para redes neuronales (Myriad X) que
+   puede correr el detector de caras sin usar la Raspberry.
+
+Reescribir en otro lenguaje (Rust, C++) ayuda poco: lo caro son las redes neuronales, que OpenCV ya corre
+en C++. La lógica en Python (ventana dinámica, mapa) cuesta poco.
+
 ## Límites conocidos (lo que falta comprobar con el robot real)
+
+- **Odometría y volver a A**: con un error sistemático de la odometría de 2.5–4 % (`--duro`) el robot
+  vuelve a donde *cree* que está A, a más de 35 cm del A real. La Create 3 corrige el giro con su IMU (en
+  la realidad el error debería ser menor), pero hay que medirlo: ir y volver 3 m y ver cuánto se corre.
+  Idea para corregirlo: guardar el scan del LiDAR en A y, al volver, alinear el scan actual con ese.
+- **Nombre equivocado de lejos**: puede decidir con caras de 14 px desde ~2.6 m si no logra acercarse.
+  Con las reglas del laboratorio (buscar a una persona y leer el QR debajo) igual hay que llegar cerca.
 
 - **Todo se validó en simulación**, incluido el puente real por ROS 2; nada se probó todavía con el robot.
   Ver [Preparar y probar en el laboratorio](#preparar-y-probar-en-el-laboratorio).
@@ -226,7 +336,7 @@ explorador de fronteras de [auto-1](../auto-1) (`planner`, `coverage`, `explorer
 - **Obstáculos que el LiDAR no ve** (más bajos que ~17 cm, patas finas, vidrio) no se evitan; el
   parachoques de la Create 3 los detecta al tocarlos.
 - **Odometría**: el mapa usa la odometría de la Create 3 (buena en recorridos cortos). En recorridos largos
-  con mucho giro, A puede quedar unos centímetros corrida. `--engine breezy` usa BreezySLAM.
+  con mucho giro, A puede quedar corrida (ver arriba). `--engine breezy` usa BreezySLAM.
 - **Flechas**: el detector supone tinta oscura sobre papel claro. Una flecha pintada en el piso, hecha con
   cinta, o de color (sin `--flechas-color`) puede no detectarse; entonces el robot navega como si no hubiera.
 - **Fotos HD** (`--hd`): implementadas en el puente (suscripción a `/oakd/rgb/image_raw`) y probadas por ROS

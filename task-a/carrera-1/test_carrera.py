@@ -117,6 +117,16 @@ class MovimientoTests(unittest.TestCase):
         self.assertGreater(v, 0.25)                                  # pasillo libre: a fondo
         self.assertLess(abs(w), 0.3)
 
+    def test_freno_puesto_pide_espacio_para_soltar(self):
+        """Con el freno del puente puesto, avanzar solo vale si delante hay PUENTE_SUELTA libres: una pared a
+        0.36 m no deja avanzar si el freno esta puesto (el puente lo suelta recien con 0.38 m libres)."""
+        s = scan_pasillo(1.2, frente=0.36)
+        x, y = s.points()
+        v_libre, _ = ventana_dinamica(x, y, 0.0, 0.3, 1.8, bloqueado=False)
+        v_puesto, _ = ventana_dinamica(x, y, 0.0, 0.3, 1.8, bloqueado=True)
+        self.assertEqual(v_puesto, 0.0)
+        self.assertGreaterEqual(v_libre, 0.0)
+
     def test_ventana_dinamica_gira_hacia_el_objetivo(self):
         x, y = scan_pasillo(3.0).points()
         v, w = ventana_dinamica(x, y, math.radians(90), 0.3, 1.8)
@@ -196,6 +206,14 @@ class SimuladorTests(unittest.TestCase):
                 caras = [c for c in m.carteles if c.tipo == "rostro"]
                 self.assertEqual(len(caras), 1)
 
+    def test_croquis_y_salas_densas_tienen_paso(self):
+        """Las cajas se achican si cierran el camino: siempre hay paso de A a B para el robot."""
+        for nombre in ("croquis", "croquis:5:3", "denso:1", "denso:7"):
+            with self.subTest(mundo=nombre):
+                m = construir(nombre)
+                self.assertEqual(len([c for c in m.carteles if c.tipo == "rostro"]), 1)
+                self.assertGreater(len(m.paredes), 4)
+
     def test_excavadora(self):
         ex = Excavadora()
         ex.rect(0, -0.5, 3, 0.5)
@@ -214,6 +232,20 @@ class PuntaAPuntaTests(unittest.TestCase):
         self.assertTrue(res["exito"], res["log"][-3:])
         self.assertEqual(res["choques"], 0)
         self.assertLess(res["tiempo"], 90)
+
+    def test_croquis_completo_con_video(self):
+        """El circuito del croquis de punta a punta, sin choques y en menos de 3 min, grabando el video."""
+        import tempfile
+        import carrera
+        with tempfile.TemporaryDirectory() as d:
+            ruta = Path(d) / "croquis.mp4"
+            args = carrera.parse(["--sim", "--go", "--no-gui", "--mudo", "--no-guardar", "--modelo", "mbf",
+                                  "--mundo", "croquis", "--video", str(ruta), "--video-sin-h264"])
+            m, robot = carrera.crear_sim(args)
+            res = carrera.correr(robot, args, sim=True, gui=False, mundo=m, max_t=180)
+            self.assertTrue(res["exito"], res["log"][-3:])
+            self.assertEqual(res["choques"], 0)
+            self.assertTrue(ruta.exists() and ruta.stat().st_size > 10000)
 
 
 if __name__ == "__main__":

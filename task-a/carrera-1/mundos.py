@@ -331,6 +331,90 @@ def sala(semilla=3, persona=None):
                  semilla=semilla, foto_b=ref_foto(foto))
 
 
+
+# ---------------------------------------------------------------- salas con muchas cajas (laboratorio)
+
+PASO_MIN = 0.24          # radio con el que se exige que haya camino: deja pasos de >= ~0.48 m
+
+
+def _sala_con_cajas(W, H, cajas, inicio, y_b, rng, persona, nombre_mundo, semilla, achicar=True):
+    """Sala W x H (m) con cajas (cx, cy, ancho, largo, alto) y la foto de B en la pared derecha (x = W) a
+    la altura y_b. Una caja que cerraria el camino de A a B se achica (o se quita): siempre hay un paso
+    de al menos 2 * PASO_MIN."""
+    ex = Excavadora()
+    ex.rect(0.0, 0.0, W, H)
+    meta = (W - 0.30, y_b)                                              # donde termina de acercarse
+    paredes = ex.paredes(0.5, (205, 205, 210))
+    puestas = []
+    for (cx, cy, w, h, alto) in cajas:
+        for _ in range(8 if achicar else 1):
+            x0, y0, x1, y1 = max(cx - w / 2, 0.0), max(cy - h / 2, 0.0), min(cx + w / 2, W), min(cy + h / 2, H)
+            prueba = ex.libre.copy()
+            ex.rect(x0, y0, x1, y1, valor=False)
+            if _camino_libre(ex, inicio[:2], meta, radio=PASO_MIN):
+                col = tuple(int(v) for v in rng.integers(50, 190, 3))
+                _caja(paredes, ((x0 + x1) / 2, (y0 + y1) / 2), (x1 - x0) / 2, (y1 - y0) / 2, alto, col)
+                puestas.append((x0, y0, x1, y1))
+                break
+            ex.libre = prueba
+            w, h = w * 0.8, h * 0.8                                         # no cabe: la caja un poco mas chica
+    nombre, foto = elegir_persona(rng, persona)
+    ancho_foto = rng.uniform(0.18, 0.28)
+    tex, alto_foto = textura_rostro(foto, ancho_foto, rng)
+    carteles = [cartel_en_pared((W, 0), (W, H), y_b / H, ancho_foto, rng.uniform(0.0, 0.12), alto_foto, tex, "rostro")]
+    return Mundo(paredes, inicio, carteles, [], (W, y_b), nombre, nombre_mundo, luz=float(rng.uniform(0.8, 1.1)),
+                 semilla=semilla, foto_b=ref_foto(foto))
+
+
+# El croquis del laboratorio (dibujo a mano, rojo = cajas): rectangulos en px del dibujo. El dibujo no esta
+# a escala, asi que se estira a W x H metros (defecto 4 x 4). Marco del dibujo: x 60..1420, y 200..800.
+_CROQUIS_PX = [(60, 450, 290, 515), (370, 480, 470, 775), (540, 285, 625, 490), (750, 200, 850, 345),
+               (745, 465, 840, 640), (975, 390, 1200, 445), (960, 455, 1040, 625), (860, 625, 1070, 690),
+               (1145, 435, 1215, 800)]
+
+
+def croquis(W=4.0, H=4.0, semilla=0, persona=None):
+    """El circuito del croquis estirado a W x H m. A abajo a la izquierda mirando a la derecha (el circulo
+    del dibujo); la foto de B en la pared derecha, abajo (supuesto: el dibujo no marca B)."""
+    rng = np.random.default_rng(semilla)
+
+    def m(px, py):
+        return (px - 60) / 1360 * W, (800 - py) / 600 * H
+
+    cajas = []
+    for x0, y0, x1, y1 in _CROQUIS_PX:
+        (ax, ay), (bx, by) = m(x0, y1), m(x1, y0)
+        cajas.append(((ax + bx) / 2, (ay + by) / 2, bx - ax, by - ay, float(rng.uniform(0.3, 0.5))))
+    ix, iy = m(110, 615)
+    inicio = (max(ix, 0.35), iy, 0.0)
+    return _sala_con_cajas(W, H, cajas, inicio, 0.25 * H, rng, persona, f"croquis:{W:g}:{H:g}", semilla)
+
+
+def sala_densa(semilla, W=4.0, H=4.0, persona=None):
+    """Sala de W x H m con 7 a 11 cajas al azar (algunas largas como tabiques, algunas pegadas a la pared),
+    A a la izquierda y B en la pared derecha. Pasos angostos (>= ~0.48 m) y caminos que no se ven desde A."""
+    rng = np.random.default_rng(semilla)
+    inicio = (0.4, float(rng.uniform(0.6, H - 0.6)), 0.0)
+    y_b = float(rng.uniform(0.5, H - 0.5))
+    cajas, n_cajas = [], int(rng.integers(7, 12))
+    for _ in range(200):
+        if len(cajas) >= n_cajas:
+            break
+        if rng.random() < 0.45:                                             # tabique: largo y angosto
+            w, h = float(rng.uniform(0.18, 0.3)), float(rng.uniform(0.8, 1.8))
+        else:
+            w = h = float(rng.uniform(0.25, 0.6))
+        if rng.random() < 0.5:
+            w, h = h, w
+        cx, cy = float(rng.uniform(0.9, W - 0.3)), float(rng.uniform(0.2, H - 0.2))
+        if rng.random() < 0.25:                                             # pegada a una pared
+            cy = h / 2 if rng.random() < 0.5 else H - h / 2
+        if math.hypot(cx - inicio[0], cy - inicio[1]) < 0.75 or math.hypot(cx - (W - 0.3), cy - y_b) < 0.6:
+            continue
+        cajas.append((cx, cy, w, h, float(rng.uniform(0.25, 0.5))))
+    return _sala_con_cajas(W, H, cajas, inicio, y_b, rng, persona, f"denso:{semilla}", semilla)
+
+
 def construir(nombre, persona=None):
     partes = nombre.split(":")
     if partes[0] == "demo":
@@ -342,4 +426,14 @@ def construir(nombre, persona=None):
     if partes[0] == "aleatorio":
         semilla = int(partes[1]) if len(partes) > 1 else 0
         return circuito_aleatorio(semilla, flechas=not (len(partes) > 2 and partes[2] == "sin"), persona=persona)
-    raise ValueError(f"mundo desconocido: {nombre} (demo | demo-sin-flechas | sala | aleatorio:N[:sin])")
+    if partes[0] == "croquis":                                   # croquis[:W:H]
+        W = float(partes[1]) if len(partes) > 1 else 4.0
+        H = float(partes[2]) if len(partes) > 2 else W
+        return croquis(W, H, persona=persona)
+    if partes[0] == "denso":                                     # denso:N[:W:H]
+        semilla = int(partes[1]) if len(partes) > 1 else 0
+        W = float(partes[2]) if len(partes) > 2 else 4.0
+        H = float(partes[3]) if len(partes) > 3 else W
+        return sala_densa(semilla, W, H, persona)
+    raise ValueError(f"mundo desconocido: {nombre} "
+                     "(demo | demo-sin-flechas | sala | aleatorio:N[:sin] | croquis[:W:H] | denso:N[:W:H])")

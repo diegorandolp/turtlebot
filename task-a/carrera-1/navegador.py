@@ -42,7 +42,9 @@ class Config:
     vmax: float = 0.30              # m/s en la ida (el Create 3 llega a ~0.31)
     vmax_vuelta: float = 0.31       # m/s en la vuelta (camino conocido)
     wmax: float = 1.8               # rad/s
-    medio_ancho: float = 0.18       # m: medio ancho del carril para ELEGIR rumbo (radio 0.17 + 1 cm)
+    medio_ancho: float = 0.21       # m: medio ancho del carril para ELEGIR rumbo. >= el pasillo del freno del
+                                    # puente (+-0.20 m): con 0.18 elegia carriles con una caja a 0.19 m de lado,
+                                    # el freno no lo dejaba avanzar y se quedaba quieto mirando ese rumbo
     libre_min: float = 0.42         # m: un rumbo cuenta si hay al menos esto libre
     radio_seguro: float = 0.20      # m: los arcos que se prueban no pasan a menos de esto de nada
     d_flecha_armar: float = 2.2     # m: a esta distancia de una flecha confirmada se arma el giro
@@ -62,6 +64,8 @@ T_ARCO = np.arange(1, 13) * 0.1
 RADIO_FISICO = 0.175            # m: radio del Create 3 (0.17) + 5 mm; ningun arco pasa mas cerca que esto
 FRENO = 0.30                    # m: el puente frena con algo a < 0.28 m en el pasillo del robot (+-0.20 m)
 FRENO_SOLTAR = 0.40             # m: ...y no suelta hasta tener 0.38 m libres (histeresis)
+PUENTE_PARA, PUENTE_SUELTA = 0.28, 0.38   # m: los umbrales del freno del puente (tb4.protocol.SafetyConfig)
+REVERSA_V, REVERSA_S = -0.12, 1.2         # retroceso para salir de un atasco con el frente bloqueado
 
 
 def arcos(vmax, wmax):
@@ -76,12 +80,14 @@ def arcos(vmax, wmax):
     return v, w, x, y, th
 
 
-def ventana_dinamica(px, py, h_rel, vmax, wmax, radio=0.20):
+def ventana_dinamica(px, py, h_rel, vmax, wmax, radio=0.20, bloqueado=False):
     """Elige (v, w) entre los arcos de 1.2 s que no pasan a menos de `radio` de ningun punto del LiDAR
     (px, py en el marco ACTUAL del robot): el que mas avanza hacia `h_rel` (rad, marco del robot), con
     buena orientacion al final y lejos de lo ocupado. None si ninguno es seguro.
     Si el robot ya esta a menos de `radio` de algo (paso angosto), valen los arcos que no lo acercan
-    mas, sin bajar nunca de RADIO_FISICO: asi puede salir en vez de quedarse girando."""
+    mas, sin bajar nunca de RADIO_FISICO: asi puede salir en vez de quedarse girando.
+    `bloqueado` = el freno del puente esta puesto: no lo suelta hasta tener PUENTE_SUELTA libres, asi que
+    un arco que avance antes de eso no sirve (el puente lo deja en v = 0 y el robot se queda quieto)."""
     v, w, x, y, th = arcos(vmax, wmax)
     d_pts = np.hypot(px, py)
     d0 = float(d_pts.min()) if d_pts.size else 9.0
@@ -100,7 +106,7 @@ def ventana_dinamica(px, py, h_rel, vmax, wmax, radio=0.20):
         delante, lado = c * dx + s * dy, -s * dx + c * dy
         en_pasillo = (delante > 0) & (np.abs(lado) < 0.20)
         frena = (en_pasillo & (delante < FRENO)).any(axis=(1, 2))
-        if d0 < 0.25:
+        if d0 < 0.25 or bloqueado:
             frena |= (en_pasillo[:, :1] & (delante[:, :1] < FRENO_SOLTAR)).any(axis=(1, 2))
         dmin = np.where(frena & (v > 0), 0.0, dmin)
     else:
@@ -198,6 +204,9 @@ class Carrera:
         self._pos = (0.0, 0.0, 0.0)           # ultima pose recibida
         self.vista_b = np.zeros(2)            # desde donde se vio la foto de B
         self._mejor_b, self.por_mapa = None, False   # progreso al acercarse; True = acercarse por ruta del mapa
+        self.bloq_frente = False              # copia del estado del freno del puente (misma histeresis)
+        self.libre_frente = self.libre_atras = 9.0   # m libres en el pasillo del robot (+-0.20 m)
+        self._reversa = -1e9                  # hasta cuando retroceder (salir de un atasco de frente)
 
     # ---------- control externo ----------
     def empezar(self, now, yaw):
@@ -262,6 +271,11 @@ class Carrera:
         gy = by + math.sin(bth) * sx + math.cos(bth) * sy - pos[1]
         c, s = math.cos(-pos[2]), math.sin(-pos[2])
         self.px, self.py = c * gx - s * gy, s * gx + c * gy
+        en_pasillo = np.abs(self.py) < 0.20
+        fr, at = self.px[en_pasillo & (self.px > 0)], -self.px[en_pasillo & (self.px < 0)]
+        self.libre_frente = float(fr.min()) if fr.size else 9.0
+        self.libre_atras = float(at.min()) if at.size else 9.0
+        self.bloq_frente = self.libre_frente < (PUENTE_SUELTA if self.bloq_frente else PUENTE_PARA)
         self._pos = pos
         v, w = self._paso(now, pos, scan, mapa, fotos, cam_ok)
         if self.traza is not None:
@@ -283,6 +297,10 @@ class Carrera:
             self.vis.marcar(x, y, now)
             if self.vis.n() != self.n_vis:
                 self.n_vis, self.t_nuevo = self.vis.n(), now
+        if now < self._reversa:
+            if self.libre_atras > 0.40:
+                return REVERSA_V, 0.0
+            self._reversa = -1e9                                # atras tambien hay algo: deja de retroceder
         if now < self._maniobra[0]:
             return 0.0, self._maniobra[1]
         if self.estado == IDA:
@@ -334,7 +352,7 @@ class Carrera:
         if phi is None:                                         # encerrado: girar hacia lo mas abierto
             k = int(np.argmax(self.libres))
             return 0.0, math.copysign(self.cfg.wmax * 0.6, ANGS[k] if ANGS[k] != 0 else 1.0)
-        r = ventana_dinamica(self.px, self.py, phi, vmax, self.cfg.wmax, self.cfg.radio_seguro)
+        r = ventana_dinamica(self.px, self.py, phi, vmax, self.cfg.wmax, self.cfg.radio_seguro, self.bloq_frente)
         if r is None:                                           # ningun arco seguro: girar en el sitio
             v, w = 0.0, math.copysign(self.cfg.wmax * 0.6, phi if phi != 0 else 1.0)
         else:
@@ -351,10 +369,25 @@ class Carrera:
             return
         if now - self._prog[0] < 3.0 or now < self._desvio[0]:
             return
+        if self.estado == VOLVER and MODOS_RUTA[self.modo_ruta] == "ida exacta":
+            # desandando: desviarse lo saca del camino que si cabe. Solo retrocede si esta pegado de frente
+            self._prog = (now, x, y)
+            if self.libre_frente < PUENTE_SUELTA and self.libre_atras > 0.45:
+                self._reversa = now + REVERSA_S
+                self.nota(now, f"desandando: pegado de frente ({self.libre_frente:.2f} m), retrocedo un poco")
+            return
         L = np.where(np.abs(ANGS) >= math.radians(45), self.libres, 0)
         k = int(np.argmax(L))
-        self._desvio = (now + 2.5, wrap(th + float(ANGS[k])))
         self._prog = (now, x, y)
+        if self.libre_frente < PUENTE_SUELTA and self.libre_atras > 0.45:
+            # pegado de frente (el freno del puente no lo deja avanzar): primero retrocede un poco, por donde
+            # vino, y despues se desvia; girando en el sitio pegado a algo vuelve a quedar trabado
+            self._reversa = now + REVERSA_S
+            self._desvio = (now + REVERSA_S + 2.5, wrap(th + float(ANGS[k])))
+            self.nota(now, f"no avanza (frente a {self.libre_frente:.2f} m): retrocedo y me desvio "
+                           f"{math.degrees(ANGS[k]):+.0f} grados")
+            return
+        self._desvio = (now + 2.5, wrap(th + float(ANGS[k])))
         self.nota(now, f"no avanza: me desvio {math.degrees(ANGS[k]):+.0f} grados ({L[k]:.1f} m libres)")
 
     def _ida(self, now, pos, scan):
@@ -522,7 +555,10 @@ class Carrera:
         if now - self.t_ruta > 2.0 or not self.ruta:
             self.t_ruta = now
             self.ruta = self._ruta_hacia(mapa, (x, y), destino, modos)
-        resta, meta = self._seguir(x, y)
+        exacta = modos[self.modo_ruta] == "ida exacta"
+        resta, meta = self._seguir(x, y, adelante=0.35 if exacta else 0.6)
+        if exacta:
+            vmax = min(vmax, 0.18)                              # por donde paso, despacio y sin cortar esquinas
         if math.hypot(x - destino[0], y - destino[1]) < 0.6:
             meta = destino                                      # el ultimo tramo, al punto exacto
         if self._mejor is None or resta < self._mejor[0] - 0.15:
@@ -530,6 +566,7 @@ class Carrera:
         elif now - self._mejor[1] > 8.0:
             self.modo_ruta = (self.modo_ruta + 1) % len(modos)
             self._mejor, self.t_ruta = (resta, now), -1e9
+            self._prog, self._desvio = None, (-1e9, 0.0)        # el nuevo modo empieza sin atasco heredado
             L = np.where(np.abs(ANGS) > math.radians(60), self.libres, 0)
             self._maniobra = (now + 1.0, math.copysign(self.cfg.wmax * 0.7, ANGS[int(np.argmax(L))]))
             self.nota(now, f"{que} no avanza: pruebo la ruta '{modos[self.modo_ruta]}'")
@@ -555,6 +592,12 @@ class Carrera:
         camino de ida al reves, acortado con rectas donde el mapa muestra paso libre."""
         for k in range(len(modos)):
             modo = modos[(self.modo_ruta + k) % len(modos)]
+            if modo == "ida exacta":
+                if not self.trail:
+                    return [destino]
+                d = [math.hypot(px - xy[0], py - xy[1]) for px, py in self.trail]
+                i = int(np.argmin(d))
+                return [xy] + self.trail[i::-1] + [destino]
             if modo == "ida":
                 if not self.trail:
                     return [destino]
@@ -599,7 +642,9 @@ class Carrera:
         return out
 
 
-MODOS_RUTA = ("mapa", "mapa fino", "ida")
+MODOS_RUTA = ("mapa", "ida exacta", "mapa fino", "ida")
+# "ida exacta": el camino de ida al reves, punto por punto y sin atajos. Es lento pero el robot YA paso por
+# ahi, asi que cabe: es la salida segura de un rincon con pasos angostos (por eso va segunda).
 
 
 def wrap_arr(a):
