@@ -159,7 +159,7 @@ class Geometria:
 class Camara:
     """Camara pinhole horizontal a CAM_Z del suelo. hfov en grados (preview de la OAK-D ~ 40)."""
 
-    def __init__(self, geo, ancho=250, alto=250, hfov=40.0, capas=6, semilla=0):
+    def __init__(self, geo, ancho=250, alto=250, hfov=42.0, capas=6, semilla=0):
         self.geo, self.W, self.H, self.K = geo, ancho, alto, capas
         self.f = (ancho / 2) / math.tan(math.radians(hfov) / 2)
         self.cx, self.cy = (ancho - 1) / 2, (alto - 1) / 2
@@ -290,7 +290,7 @@ class Camara:
 class SimRobot:
     """Mismo API que TB4Client, con tiempo simulado (advance)."""
 
-    def __init__(self, mundo, hfov=40.0, odom_ruido=0.01, odom_sesgo=0.0, semilla=1, camara_ok=True,
+    def __init__(self, mundo, hfov=42.0, odom_ruido=0.01, odom_sesgo=0.0, semilla=1, camara_ok=True,
                  acel=1.0, acel_w=4.0, foto_hd=None, freno=True):
         """foto_hd = (ancho, alto, hfov) de la camara grande (photo(hd=True)); freno=False si delante va el
         puente real (robot_ros_sim.py), que ya aplica el freno."""

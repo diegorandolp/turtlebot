@@ -68,6 +68,7 @@ python3 task-a/carrera-1/probar_vision.py                 # con el robot: ver fl
 python3 task-a/carrera-1/carrera.py --sim --mundo croquis+6 --go --video   # reglas del lab: 6 fotos con QR
 python3 task-a/carrera-1/carrera.py --sim --mundo lab:3+6 --go --video    # meta en otra pared, sala con cajas al azar
 python3 task-a/carrera-1/carrera.py --sim --mundo laberinto:3+6 --go --video   # laberinto largo 7x6 con senales en cada giro
+robot/desplegar_carrera.sh && robot/desplegar_carrera.sh --verificar   # correr la carrera EN el robot (sin laptop): ver README de carrera-1
 python3 task-a/carrera-1/probar_vision.py --qr --hd       # con el robot: ver QR y de que cara es cada uno
 python3 task-a/carrera-1/carrera.py --undock --buscar "Nombre Apellido"   # COMPETENCIA: arranca en pausa, g = empezar
 ```

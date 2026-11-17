@@ -215,7 +215,7 @@ no reemplaza probar en el robot.
 
 El laboratorio es una sala chica (~4×4 m) **llena de cajas de cartón** (paredes marrón medio) con **piso
 gris medio**; así se dibujan las paredes, las cajas y el suelo en estos mundos, y la cámara simulada está a
-13 cm del suelo con el mismo campo de visión que la OAK-D (40° la preview, 66° la HD), desenfoque, ruido y
+13 cm del suelo con el campo de visión de catálogo de la OAK-D Lite (42° la preview, 69° la HD), desenfoque, ruido y
 JPEG: lo que ve el robot en el video es lo que vería en el laboratorio.
 
 | Mundo | Qué es |
@@ -237,7 +237,7 @@ mirando a los costados. Tres detalles más que salieron de los laberintos:
 
 - **Un vistazo a la pared antes de doblar.** Cuando va a doblar por una abertura y tiene una pared a
   0.5–1.6 m de frente (y ya usó alguna señal: en un circuito con señales hay una en cada giro), se pone de
-  frente a esa pared, mira 0.6 s y vuelve al rumbo que traía. La cámara ve 40°: llegando en diagonal, la
+  frente a esa pared, mira 0.6 s y vuelve al rumbo que traía. La cámara ve 42°: llegando en diagonal, la
   señal quedaba fuera del cuadro y el robot doblaba por la abertura equivocada.
 - **Una señal vale otra vez** si, 15 s después de usarla o pasarla de largo, se la tiene de frente a
   < 1.2 m. En un laberinto la misma señal se ve desde varios pasillos antes de llegar a ella; antes quedaba
@@ -250,7 +250,7 @@ mirando a los costados. Tres detalles más que salieron de los laberintos:
 saturado u oscura sale oscura sobre el cartón y el papel blanco, y lo que se mide es su **forma** (la punta
 y el cuerpo), no su color. `--flechas-solo-negras` vuelve al detector anterior.
 
-**Pasillos con fotos de costado.** En un pasillo la cámara (40°) apunta a lo largo y una foto en la pared
+**Pasillos con fotos de costado.** En un pasillo la cámara (42°) apunta a lo largo y una foto en la pared
 de al lado no entra nunca. Pasadas las señales (1.5 m después de la última usada) y sin ninguna foto por
 revisar, cada ~0.9 m el robot mira 75° hacia las paredes que tiene a menos de 1.4 m. Si la foto es chica y
 ya está a menos de 0.5 m de la pared, decide con lo que vio en vez de insistir en acercarse.
@@ -403,7 +403,7 @@ real lo que el simulador supone. Los comandos van desde la raíz del repositorio
    Si las flechas no se detectan, probar `--flechas-color`. Para medir el detector con las señales reales:
    elegir la clase con `1` izq / `2` der / `3` nada, guardar fotos con `s` (quedan en
    `task-a/carrera-1/fotos/`) y luego `python task-a/carrera-1/evaluar_flechas.py --izq task-a/carrera-1/fotos/izq --der task-a/carrera-1/fotos/der --nada task-a/carrera-1/fotos/nada`.
-6. Medir el campo de visión (se supone 40° la preview y 66° la HD): con el robot mirando una pared a
+6. Medir el campo de visión (catálogo: 42° la preview y 69° la HD): con el robot mirando una pared a
    d = 1 m, poner dos marcas a ±0.30 m del centro, guardar una foto (`s`) y ver en qué columnas caen:
    `hfov = 2·atan(0.30 · ancho / (d · (u_der − u_izq)))` en grados. Si sale distinto, pasarlo con
    `--hfov` (o `--hfov-hd`).
@@ -446,6 +446,7 @@ real lo que el simulador supone. Los comandos van desde la raíz del repositorio
 | `banco_pruebas.py` | Muchas carreras en paralelo y su resumen; `--videos` guarda el video de las que fallan o chocan; `--duro` |
 | `video.py` | Grabador del video del recorrido (tiempo de la carrera, en otro hilo, nunca tumba la carrera) |
 | `medir_cpu.py` | Cuánto CPU usa cada pieza: para decidir si todo cabe en la Raspberry del robot |
+| `verificar_pi.py` | Se corre EN la Raspberry: librerías, modelos, puente UDP, LiDAR, memoria y ms por pieza (`robot/desplegar_carrera.sh --verificar`) |
 | `robot_ros_sim.py`, `sim_ros.sh` | El simulador como robot ROS 2, con el puente real delante |
 | `probar_vision.py` | Ver la percepción en vivo sin mover el robot (con `--qr`, también los QR y de qué cara es cada uno); guardar fotos para evaluar |
 | `evaluar_flechas.py` | Acierto del detector de flechas sobre carpetas de fotos (izq/der/nada) |
@@ -457,12 +458,33 @@ explorador de fronteras de [auto-1](../auto-1) (`planner`, `coverage`, `explorer
 
 ## Correr todo en el robot (sin la laptop)
 
-`carrera.py` habla con el robot por UDP; el puente corre en la Raspberry. Para que la carrera corra en el
-robot basta copiar el repositorio a la Raspberry y correrlo contra el puente local, sin ventana:
+**El robot**: TurtleBot 4 **Lite** = iRobot Create 3 + Raspberry Pi 4B (4 GB) + RPLIDAR A1M8 (12 m, ~7 Hz) +
+OAK-D Lite (color IMX214, 69° de campo horizontal; la preview 250×250 que da el puente es el recorte cuadrado
+central → 42°), Ubuntu 24.04 + ROS 2 Jazzy. 342×339×192 mm, 0.31 m/s en modo seguro, 1.9 rad/s. Sin pantalla
+ni parlante. Fuente: [manual de usuario](https://turtlebot.github.io/turtlebot4-user-manual/) y la hoja de
+datos de Luxonis.
+
+`carrera.py` habla con el robot por UDP; el puente corre en la Raspberry. La carrera **no necesita ROS**: solo
+Python, numpy y OpenCV, así que corre en la Raspberry contra el puente local (`127.0.0.1`) y sin ventana.
+Todo está en un script que se usa desde la PC (`robot/desplegar_carrera.sh`, variables `TB4_IP` y `SSHPASS`):
 
 ```bash
-python3 task-a/carrera-1/carrera.py 127.0.0.1 --no-gui --undock      # en la Raspberry, por SSH
+robot/desplegar_carrera.sh                   # 1) copia tb4/, reconocimiento/ (modelos mbf), slam-1, auto-1, carrera-1 a ~/turtlebot
+robot/desplegar_carrera.sh --instalar        # 2) una vez, con internet en el robot: numpy + opencv-contrib-python-headless
+robot/desplegar_carrera.sh --verificar       # 3) verificar_pi.py EN el robot: librerías, modelos, puente, LiDAR, memoria, ms por pieza
+robot/desplegar_carrera.sh --medir           #    medir_cpu.py EN el robot: % de un núcleo a ritmo normal
+robot/desplegar_carrera.sh --correr "Nombre Apellido"   # 4) arranca la carrera en el robot (nohup; queda en PAUSA)
+robot/desplegar_carrera.sh --escuchar        #    en otra terminal: sigue el log y DICE el anuncio en la PC (el robot no tiene parlante)
+robot/desplegar_carrera.sh --go              #    la salida (crea el archivo GO que carrera.py --go-archivo espera)
+robot/desplegar_carrera.sh --estado | --parar
+robot/desplegar_carrera.sh --video           # 5) trae el último video y registro a corridas_robot/
 ```
+
+La carrera en el robot corre con `--no-gui --undock --mudo --video --buscar NOMBRE --go-archivo GO`; `CARRERA_ARGS`
+agrega opciones (`CARRERA_ARGS="--hd --cam-periodo 0.3"`). Como no hay pantalla, la salida se da creando un
+archivo (`--go`) y el anuncio lo lee la PC del log (`robot/escuchar_anuncio.py`): en la competencia la PC
+queda en A con el volumen alto. Si la Wi-Fi se cae a mitad de carrera **no pasa nada**: la carrera y el
+puente están en el robot; solo se pierde la voz, y el anuncio queda en `carrera.log` y en el video.
 
 El riesgo es el CPU. `medir_cpu.py` mide cada pieza (no necesita robot). En una PC x86 (1 núcleo):
 
@@ -500,7 +522,7 @@ en C++. La lógica en Python (ventana dinámica, mapa) cuesta poco.
 
 - **Todo se validó en simulación**, incluido el puente real por ROS 2; nada se probó todavía con el robot.
   Ver [Preparar y probar en el laboratorio](#preparar-y-probar-en-el-laboratorio).
-- **Campo de visión supuesto**: 40° para la preview 250×250 (recorte cuadrado de la imagen 16:9) y 66° para
+- **Campo de visión de catálogo, no medido**: 42° para la preview 250×250 (recorte cuadrado de la imagen 16:9) y 69° para
   la HD. Si es otro, los rumbos a las caras y señales salen corridos (se corrige solo al acercarse). Medirlo.
 - **La cámara mira horizontal a ~13 cm del suelo**: a 1 m ve hasta ~0.5 m de altura y a 0.6 m solo hasta
   ~0.35 m. Una foto de B colgada alta solo se ve de lejos (pequeña): el reconocimiento con caras de

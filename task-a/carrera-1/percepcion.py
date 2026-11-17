@@ -49,7 +49,7 @@ def distancia_lidar(scan, rumbo, ancho=math.radians(2.5)):
 
 
 class Percepcion:
-    def __init__(self, reconocedor, det_flechas, hfov=40.0, min_px_reconocer=10, cara_m=0.11, flecha_m=0.14,
+    def __init__(self, reconocedor, det_flechas, hfov=42.0, min_px_reconocer=10, cara_m=0.11, flecha_m=0.14,
                  hfov_hd=None, qr_m=0.10, max_caras=3):
         self.rec, self.det_fl = reconocedor, det_flechas
         self.hfov = math.radians(hfov)

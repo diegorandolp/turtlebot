@@ -310,6 +310,7 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
         grab = Grabador(destino, fps=args.video_fps, bloquear=sim, h264=not args.video_sin_h264)
     if args.go:
         nav.empezar(t0, 0.0)
+    t_go_archivo = 0.0
     try:
         while True:
             now = reloj()
@@ -420,6 +421,13 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
                     nav.empezar(now, pos[2])
             elif not sim:
                 time.sleep(0.02)
+            if args.go_archivo and nav.estado == PAUSA and now >= t_go_archivo:
+                t_go_archivo = now + 0.5                                 # sin ventana (robot): la salida la da un archivo
+                ga = Path(args.go_archivo)
+                if ga.exists():
+                    ga.unlink()
+                    nav.empezar(now, pos[2])
+                    print("[go] salida dada por", ga, flush=True)
             if t_hecho is not None and (not gui or sim) and now - t_hecho > 1.0:
                 break
             if nav.t_inicio is not None and now - nav.t_inicio > max_t:
@@ -497,6 +505,8 @@ def parse(argv=None):
     ap.add_argument("--persona", default=None, help="(--sim) quien esta en la foto de B (defecto: al azar)")
     ap.add_argument("--no-gui", action="store_true", help="sin ventana (con el robot real solo se para con Ctrl+C)")
     ap.add_argument("--go", action="store_true", help="empezar sin esperar la tecla g")
+    ap.add_argument("--go-archivo", default=None, metavar="RUTA",
+                    help="sin ventana (en el robot): empezar cuando aparezca este archivo (robot/desplegar_carrera.sh --go)")
     ap.add_argument("--undock", action="store_true", help="sacar del dock al empezar (retrocede solo)")
     ap.add_argument("--vel", type=float, default=0.30, help="velocidad maxima en m/s (defecto 0.30; el robot llega a 0.31)")
     ap.add_argument("--temprano", action="store_true", help="volver apenas se sabe quien es (sin terminar de acercarse a B)")
@@ -505,10 +515,13 @@ def parse(argv=None):
     ap.add_argument("--flechas-solo-negras", action="store_true",
                     help="flechas solo de tinta oscura (por defecto cuenta la FORMA, de cualquier color)")
     ap.add_argument("--modelo", default="auto", help="reconocimiento: auto (r50 si esta instalado, si no mbf) | mbf | r50")
-    ap.add_argument("--hfov", type=float, default=40.0, help="campo de vision horizontal de la preview 250x250, en grados")
+    # OAK-D Lite (TurtleBot 4 Lite): color IMX214, HFOV 69 grados (hoja de datos de Luxonis). La HD 1280x720 conserva
+    # ese ancho; la preview 250x250 es el recorte cuadrado central de la 16:9: 2*atan(tan(34.5)*720/1280) = 42 grados.
+    # Son valores de catalogo: medirlos en el laboratorio (probar_vision.py frente a una regla a 1 m).
+    ap.add_argument("--hfov", type=float, default=42.0, help="campo de vision horizontal de la preview 250x250, en grados")
     ap.add_argument("--hd", action="store_true",
                     help="fotos HD 1280x720: ve la cara y las flechas ~3 veces mas lejos (camara con camara_rgb.sh --hd)")
-    ap.add_argument("--hfov-hd", type=float, default=66.0, help="campo de vision horizontal de la foto HD, en grados")
+    ap.add_argument("--hfov-hd", type=float, default=69.0, help="campo de vision horizontal de la foto HD, en grados")
     ap.add_argument("--engine", choices=("auto", "breezy", "odom"), default="odom", help="mapa: odometria (defecto) o BreezySLAM")
     ap.add_argument("--max-t", type=float, default=180.0, help="s maximos de la corrida (el limite del profe: 3 min)")
     ap.add_argument("--cam-periodo", type=float, default=None, help="(--sim) s entre fotos (defecto 0.15, con --hd 0.3)")
