@@ -10,9 +10,9 @@ Formato de cada datagrama (little-endian):
               paquetes de otro grupo que use el mismo puerto (no es seguridad real).
 
 PC -> robot:  HELLO, BYE, CMD(seq, v, w), PHOTO(req, calidad[, camara]), DOCK(req), UNDOCK(req),
-              AUDIO(req, notas), LIGHT(req, color)
+              AUDIO(req, notas), LIGHT(req, color), START, TEXTO(texto)
 Robot -> PC:  SCAN, ODOM, STATUS, IMG (trozos de un JPEG), EVENT (respuestas), DET (caras detectadas en la camara),
-              BUTTON (boton de la Create 3)
+              BUTTON (boton de la Create 3; 3 = START por UDP), TEXTO (anuncio de la carrera)
 
 Convencion de ejes (base_link del robot): x adelante, y izquierda, angulos en radianes,
 0 = frente, positivo = izquierda (antihorario). El puente ya aplica el giro del LiDAR.
@@ -32,6 +32,8 @@ DEFAULT_KEY = "grupo3"
 # Tipos de paquete
 HELLO, BYE, CMD, PHOTO, DOCK, UNDOCK = b"H", b"B", b"C", b"P", b"D", b"U"
 AUDIO, LIGHT = b"A", b"L"  # PC -> robot: tocar notas en el parlante de la Create 3 / color del anillo de luces
+START = b"S"               # PC -> robot: dar la salida a la carrera que corre EN el robot (el puente lo reparte como BUTTON 3)
+TEXTO = b"x"               # cualquiera -> robot -> todos: un texto (el anuncio de la carrera llega asi a la PC)
 SCAN, ODOM, STATUS, IMG, EVENT = b"s", b"o", b"t", b"i", b"e"
 DET = b"n"                 # robot -> PC: cajas de caras detectadas EN la camara (chip Myriad X de la OAK-D)
 BUTTON = b"b"              # robot -> PC: boton de la Create 3 apretado (1, 2 o 0 = power)
@@ -146,6 +148,14 @@ def pack_light(token, req_id, r, g, b, ms=0):
 
 def unpack_light(payload):
     return _LIGHT.unpack_from(payload)
+
+
+def pack_texto(token, texto):
+    return pack(TEXTO, token, texto.encode("utf-8")[:1000])
+
+
+def unpack_texto(payload):
+    return payload.decode("utf-8", "replace")
 
 
 def pack_button(token, stamp, boton):

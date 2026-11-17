@@ -170,3 +170,10 @@ class Create3Tests(unittest.TestCase):
         kind, payload = P.unpack(P.pack_button(TOKEN, 5.5, 1), TOKEN)
         self.assertEqual(kind, P.BUTTON)
         self.assertEqual(P.unpack_button(payload)[1], 1)
+
+    def test_start_y_texto(self):
+        kind, payload = P.unpack(P.pack(P.START, TOKEN), TOKEN)
+        self.assertEqual((kind, payload), (P.START, b""))
+        kind, payload = P.unpack(P.pack_texto(TOKEN, "ANUNCIO: La palabra es ñandú_7"), TOKEN)
+        self.assertEqual(kind, P.TEXTO)
+        self.assertEqual(P.unpack_texto(payload), "ANUNCIO: La palabra es ñandú_7")

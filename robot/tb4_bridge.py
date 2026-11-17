@@ -218,6 +218,12 @@ class Bridge(Node):
                     self.pending.append((kind, addr, req_id, None))
                 else:
                     self.pending.append((None, addr, req_id, "otra PC esta conduciendo"))
+            elif kind == P.START:                       # la salida por UDP: a todos (la carrera corre en el robot)
+                self.get_logger().info(f"START desde {addr[0]}")
+                self.broadcast(P.pack_button(self.token, time.time(), 3))
+            elif kind == P.TEXTO:                       # p. ej. el anuncio de la carrera: a todos (llega a la PC)
+                self.get_logger().info("Texto: " + P.unpack_texto(payload))
+                self.broadcast(P.pack_texto(self.token, P.unpack_texto(payload)))
             elif kind == P.AUDIO:
                 req_id, notas = P.unpack_audio(payload)
                 self.pending.append((P.AUDIO, addr, req_id, notas))

@@ -7,7 +7,8 @@
 #   robot/desplegar_carrera.sh --medir         #    medir_cpu.py en el robot (ms por pieza y % de un nucleo)
 #   robot/desplegar_carrera.sh --correr "Nombre Apellido"   # 4) arranca la carrera en el robot (en pausa: ver --go)
 #   robot/desplegar_carrera.sh --go            #    da la salida (o el BOTON 1 de la Create 3; en la ventana es la tecla g)
-#   robot/desplegar_carrera.sh --escuchar      #    sigue el log desde la PC y DICE EN VOZ ALTA el anuncio (el robot no tiene parlante)
+#   robot/desplegar_carrera.sh --start         #    START por UDP (router) y espera el anuncio: lo imprime y lo dice (robot/control_carrera.py)
+#   robot/desplegar_carrera.sh --escuchar      #    (por SSH) sigue el log y dice el anuncio; sirve aunque el puente sea viejo
 #   robot/desplegar_carrera.sh --estado        #    corre? y las ultimas lineas del log
 #   robot/desplegar_carrera.sh --parar         #    detiene la carrera (el puente frena el robot)
 #   robot/desplegar_carrera.sh --video         # 5) trae el ultimo video y el registro de la corrida a corridas_robot/
@@ -88,13 +89,16 @@ case "$MODE" in
     [ -n "$NOMBRE" ] || { echo "uso: $0 --correr \"Nombre Apellido\"   (como en datos/rostros/)"; exit 1; }
     # nohup + setsid: sigue corriendo aunque se cierre la SSH. Empieza en PAUSA: --go da la salida.
     "${SSH[@]}" "$TARGET" "cd ~/$DIR && pkill -f '[c]arrera-1/carrera.py' 2>/dev/null; \
-      setsid nohup python3 -u task-a/carrera-1/carrera.py 127.0.0.1 --no-gui --undock --video \
+      setsid nohup python3 -u task-a/carrera-1/carrera.py 127.0.0.1 --no-gui --undock --video --video-fps 4 --video-sin-h264 \
         --buscar '$NOMBRE' --go-archivo GO --go-boton --resultado-archivo RESULTADO.txt ${CARRERA_ARGS:-} > $LOG 2>&1 < /dev/null & \
       sleep 2; pgrep -af '[c]arrera-1/carrera.py' >/dev/null && echo '[ok] carrera arrancada (en pausa)' || { tail -n 20 $LOG; exit 1; }"
     echo "Ahora: $0 --go (o el BOTON 1 del robot) da la salida; $0 --escuchar para oir el anuncio en la PC"
     ;;
   --go)
     "${SSH[@]}" "$TARGET" "touch ~/$DIR/GO && echo '[ok] salida dada'"
+    ;;
+  --start)
+    TB4_IP="$IP" python3 "$ROOT/robot/control_carrera.py" "$IP" "$@"
     ;;
   --escuchar)
     # La Raspberry no tiene parlante: la PC sigue el log y dice en voz alta la linea del anuncio ("==== La palabra es X ====").

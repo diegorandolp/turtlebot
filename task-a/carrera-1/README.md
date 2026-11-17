@@ -446,6 +446,7 @@ real lo que el simulador supone. Los comandos van desde la raíz del repositorio
 | `banco_pruebas.py` | Muchas carreras en paralelo y su resumen; `--videos` guarda el video de las que fallan o chocan; `--duro` |
 | `video.py` | Grabador del video del recorrido (tiempo de la carrera, en otro hilo, nunca tumba la carrera) |
 | `medir_cpu.py` | Cuánto CPU usa cada pieza: para decidir si todo cabe en la Raspberry del robot |
+| `../../robot/control_carrera.py` | Desde la PC por UDP: START a la carrera que corre en el robot y esperar el anuncio (lo imprime y lo dice) |
 | `../../robot/carrera.service` | Servicio systemd: la carrera arranca al encender el robot y espera el botón 1 (`desplegar_carrera.sh --servicio`) |
 | `verificar_pi.py` | Se corre EN la Raspberry: librerías, modelos, puente UDP, LiDAR, memoria y ms por pieza (`robot/desplegar_carrera.sh --verificar`) |
 | `robot_ros_sim.py`, `sim_ros.sh` | El simulador como robot ROS 2, con el puente real delante |
@@ -485,9 +486,11 @@ punto) da la salida: anillo azul + una nota, sale del dock y arranca. Al volver 
 (o rojo + dos notas graves si falló). El anuncio queda en `~/turtlebot/RESULTADO.txt`, en `carrera.log` y en
 el video; si se conecta un **parlante USB** a la Raspberry (y `sudo apt install espeak-ng`), además lo **dice
 en voz alta** — es lo recomendado para que el jurado lo oiga sin ninguna PC. Para otra carrera basta apretar
-el botón otra vez. Con la PC en la misma red se puede, opcionalmente, seguir el log y oír el anuncio desde ella
-(`--escuchar`), dar la salida (`--go`), ver el resultado (`--resultado`) o traer el video (`--video`); nada de
-eso hace cómputo en la PC ni hace falta para que la carrera funcione. Sin el servicio, `--correr "Nombre"`
+el botón otra vez. **Desde la PC por UDP** (a través del router, sin cómputo en la PC):
+`python3 robot/control_carrera.py` manda **START** al puente, que lo reparte a la carrera como "botón 3", y
+espera el **anuncio**, que la carrera manda de vuelta por el puente al terminar: lo imprime en la terminal y
+lo dice en voz alta. Es lo mismo que el botón 1 y el anillo de luces, por red. También `--go`, `--escuchar`,
+`--resultado` y `--video` (por SSH). Sin el servicio, `--correr "Nombre"`
 arranca una carrera a mano (también espera el botón 1 o `--go`).
 
 **Dónde se va el CPU** (perfil de una carrera completa en `croquis+6`, PC x86, 1 núcleo): antes de optimizar,
@@ -522,6 +525,10 @@ Una Raspberry Pi 4 es 3–5× más lenta por núcleo que esa PC y ya corre ROS, 
 **Hay que medirlo en el robot** (`robot/desplegar_carrera.sh --medir`). Si no alcanza, por orden de esfuerzo:
 
 1. Caras en la cámara (arriba) y menos fotos por segundo (`--cam-periodo 0.3`), sin `--hd` salvo para el QR.
+   El video cuesta ~20 % más a 10 fps y ~8 % a 4 fps (`--video-fps 4 --video-sin-h264`: en el robot se graba
+   sin convertir y se convierte después en la PC); así va en `carrera.service`.
+   **RAM**: la carrera usa ~260 MB (numpy + OpenCV 56, modelos 46, el resto mapas e imágenes); la Raspberry
+   tiene 4 GB y ROS + cámara + puente usan ~1–1.5 GB: sobra.
 2. Repartir en núcleos: la cámara (detectar + reconocer) ya va en otro hilo; OpenCV puede usar 2 hilos
    (`cv2.setNumThreads(2)`); la Raspberry tiene 4.
 3. ¿Reescribir en Rust/C++? Ayuda poco: lo que queda caro son las redes (YuNet, ArcFace), que OpenCV ya corre

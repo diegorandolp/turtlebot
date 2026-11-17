@@ -422,6 +422,8 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
                 if not args.mudo:                                        # la voz no lee bien "_" ni "-"
                     anunciar(texto.replace("_", " ").replace("-", " "), imprimir=False)
                 senal_robot(robot, "hecho" if (nav.palabra or nav.nombre) else "fallo")
+                if hasattr(robot, "decir"):                              # a todas las PC conectadas al puente
+                    robot.decir(f"ANUNCIO: {texto}")
                 if args.resultado_archivo:                               # en el robot: queda escrito aunque no haya PC
                     Path(args.resultado_archivo).write_text(texto + "\n", encoding="utf-8")
             # ---- ventana (y video) ----
@@ -451,8 +453,8 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
                 if args.go_archivo and Path(args.go_archivo).exists():     # sin ventana (robot): un archivo
                     Path(args.go_archivo).unlink()
                     dar_salida = True
-                if args.go_boton and hasattr(robot, "boton") and robot.boton() == 1:   # o el boton 1 de la Create 3
-                    dar_salida = True
+                if args.go_boton and hasattr(robot, "boton") and robot.boton() in (1, 3):
+                    dar_salida = True                                    # el boton 1 de la Create 3, o START por UDP
                 if dar_salida:
                     if args.buscar_archivo and Path(args.buscar_archivo).exists():
                         # a quien buscar se decide en la competencia: se lee del archivo al dar la salida
@@ -541,7 +543,8 @@ def parse(argv=None):
     ap.add_argument("--go", action="store_true", help="empezar sin esperar la tecla g")
     ap.add_argument("--go-archivo", default=None, metavar="RUTA",
                     help="sin ventana (en el robot): empezar cuando aparezca este archivo (robot/desplegar_carrera.sh --go)")
-    ap.add_argument("--go-boton", action="store_true", help="sin PC: empezar al apretar el boton 1 de la Create 3")
+    ap.add_argument("--go-boton", action="store_true",
+                    help="empezar al apretar el boton 1 de la Create 3 o al recibir START por UDP (robot/control_carrera.py)")
     ap.add_argument("--buscar-archivo", default=None, metavar="RUTA",
                     help="leer a quien buscar de este archivo al dar la salida (sin PC: se escribe antes de la carrera)")
     ap.add_argument("--resultado-archivo", default=None, metavar="RUTA", help="escribir el anuncio en este archivo al terminar")

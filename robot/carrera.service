@@ -24,7 +24,7 @@ Environment=PYTHONUNBUFFERED=1
 # espera al puente UDP local (hasta 3 min) y arranca en PAUSA
 ExecStartPre=/bin/bash -c 'for i in $(seq 1 90); do python3 -c "from tb4.client import TB4Client; TB4Client(\"127.0.0.1\").wait_ready(1.5)" 2>/dev/null && exit 0; sleep 2; done; exit 1'
 ExecStart=/usr/bin/python3 task-a/carrera-1/carrera.py 127.0.0.1 --no-gui --undock --video --go-boton --go-archivo GO \
-    --buscar-archivo BUSCAR.txt --resultado-archivo RESULTADO.txt --cam-periodo 0.25
+    --buscar-archivo BUSCAR.txt --resultado-archivo RESULTADO.txt --cam-periodo 0.25 --video-fps 4 --video-sin-h264
 StandardOutput=append:/home/ubuntu/turtlebot/carrera.log
 StandardError=append:/home/ubuntu/turtlebot/carrera.log
 Restart=always

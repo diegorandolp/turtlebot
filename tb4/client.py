@@ -102,7 +102,8 @@ class TB4Client:
         self.lock = threading.Lock()
         self._scan = self._pose = self._status = None
         self._det = None         # (stamp, [(x0, y0, x1, y1, conf)], recibido): caras detectadas EN la camara
-        self._boton = None       # (boton, recibido): ultimo boton de la Create 3 apretado
+        self._boton = None       # (boton, recibido): ultimo boton de la Create 3 apretado (3 = START por UDP)
+        self._textos = []        # textos repartidos por el puente (el anuncio de la carrera que corre en el robot)
         self._cmd = (0.0, 0.0)
         self._cmd_time = 0.0
         self._seq = 0
@@ -173,6 +174,21 @@ class TB4Client:
         Sirve para dar la salida sin PC: robot/tb4_bridge.py lo manda al apretarlo."""
         b, self._boton = self._boton, None
         return None if b is None else b[0]
+
+    def start(self):
+        """Da la salida a la carrera que corre EN el robot (carrera.py --go-boton): el puente lo reparte a todos
+        los clientes como boton 3. No espera respuesta."""
+        self._send(P.pack(P.START, self.token))
+
+    def decir(self, texto):
+        """Manda un texto al puente, que lo reparte a todos los clientes (asi el anuncio llega a la PC)."""
+        self._send(P.pack_texto(self.token, texto))
+
+    def textos(self):
+        """Textos recibidos desde la ultima vez: [(recibido, texto)]."""
+        with self.lock:
+            t, self._textos = self._textos, []
+        return t
 
     def audio(self, notas, timeout=3.0):
         """Toca notas [(hz, ms), ...] en el parlante de la Create 3 (el unico parlante del TurtleBot 4 Lite)."""
@@ -277,6 +293,9 @@ class TB4Client:
         elif kind == P.BUTTON:
             _, boton = P.unpack_button(payload)
             self._boton = (boton, now)
+        elif kind == P.TEXTO:
+            with self.lock:
+                self._textos.append((now, P.unpack_texto(payload)))
         elif kind == P.STATUS:
             _, bat, docked, flags, driver, front, rear, n = P.unpack_status(payload)
             self._status = Status(
