@@ -446,6 +446,7 @@ real lo que el simulador supone. Los comandos van desde la raíz del repositorio
 | `banco_pruebas.py` | Muchas carreras en paralelo y su resumen; `--videos` guarda el video de las que fallan o chocan; `--duro` |
 | `video.py` | Grabador del video del recorrido (tiempo de la carrera, en otro hilo, nunca tumba la carrera) |
 | `medir_cpu.py` | Cuánto CPU usa cada pieza: para decidir si todo cabe en la Raspberry del robot |
+| `../../robot/carrera.service` | Servicio systemd: la carrera arranca al encender el robot y espera el botón 1 (`desplegar_carrera.sh --servicio`) |
 | `verificar_pi.py` | Se corre EN la Raspberry: librerías, modelos, puente UDP, LiDAR, memoria y ms por pieza (`robot/desplegar_carrera.sh --verificar`) |
 | `robot_ros_sim.py`, `sim_ros.sh` | El simulador como robot ROS 2, con el puente real delante |
 | `probar_vision.py` | Ver la percepción en vivo sin mover el robot (con `--qr`, también los QR y de qué cara es cada uno); guardar fotos para evaluar |
@@ -465,26 +466,29 @@ ni parlante. Fuente: [manual de usuario](https://turtlebot.github.io/turtlebot4-
 datos de Luxonis.
 
 `carrera.py` habla con el robot por UDP; el puente corre en la Raspberry. La carrera **no necesita ROS**: solo
-Python, numpy y OpenCV, así que corre en la Raspberry contra el puente local (`127.0.0.1`) y sin ventana.
-Todo está en un script que se usa desde la PC (`robot/desplegar_carrera.sh`, variables `TB4_IP` y `SSHPASS`):
+Python, numpy y OpenCV, así que corre en la Raspberry contra el puente local (`127.0.0.1`), sin ventana y
+**sin Wi-Fi ni laptop durante la carrera**: la PC solo se usa antes (copiar e instalar) y, si se quiere,
+después (traer el video). Todo está en `robot/desplegar_carrera.sh` (variables `TB4_IP` y `SSHPASS`):
 
 ```bash
 robot/desplegar_carrera.sh                   # 1) copia tb4/, reconocimiento/ (modelos mbf), slam-1, auto-1, carrera-1 a ~/turtlebot
 robot/desplegar_carrera.sh --instalar        # 2) una vez, con internet en el robot: numpy + opencv-contrib-python-headless
 robot/desplegar_carrera.sh --verificar       # 3) verificar_pi.py EN el robot: librerías, modelos, puente, LiDAR, memoria, ms por pieza
 robot/desplegar_carrera.sh --medir           #    medir_cpu.py EN el robot: % de un núcleo a ritmo normal
-robot/desplegar_carrera.sh --correr "Nombre Apellido"   # 4) arranca la carrera en el robot (nohup; queda en PAUSA)
-robot/desplegar_carrera.sh --escuchar        #    en otra terminal: sigue el log y DICE el anuncio en la PC (el robot no tiene parlante)
-robot/desplegar_carrera.sh --go              #    la salida (crea el archivo GO que carrera.py --go-archivo espera)
-robot/desplegar_carrera.sh --estado | --parar
-robot/desplegar_carrera.sh --video           # 5) trae el último video y registro a corridas_robot/
+robot/desplegar_carrera.sh --servicio        # 4) instala robot/carrera.service: la carrera arranca sola al encender el robot
+robot/desplegar_carrera.sh --buscar "Nombre Apellido"   # 5) deja escrito a quién buscar (~/turtlebot/BUSCAR.txt)
 ```
 
-La carrera en el robot corre con `--no-gui --undock --mudo --video --buscar NOMBRE --go-archivo GO`; `CARRERA_ARGS`
-agrega opciones (`CARRERA_ARGS="--hd --cam-periodo 0.3"`). Como no hay pantalla, la salida se da creando un
-archivo (`--go`) y el anuncio lo lee la PC del log (`robot/escuchar_anuncio.py`): en la competencia la PC
-queda en A con el volumen alto. Si la Wi-Fi se cae a mitad de carrera **no pasa nada**: la carrera y el
-puente están en el robot; solo se pierde la voz, y el anuncio queda en `carrera.log` y en el video.
+**El día de la competencia, sin PC** (`robot/carrera.service`): se enciende el robot en A; cuando ROS y el
+puente están listos, la carrera carga los modelos y queda en PAUSA. **El botón 1 de la Create 3** (el del
+punto) da la salida: anillo azul + una nota, sale del dock y arranca. Al volver a A: **anillo verde + melodía**
+(o rojo + dos notas graves si falló). El anuncio queda en `~/turtlebot/RESULTADO.txt`, en `carrera.log` y en
+el video; si se conecta un **parlante USB** a la Raspberry (y `sudo apt install espeak-ng`), además lo **dice
+en voz alta** — es lo recomendado para que el jurado lo oiga sin ninguna PC. Para otra carrera basta apretar
+el botón otra vez. Con la PC en la misma red se puede, opcionalmente, seguir el log y oír el anuncio desde ella
+(`--escuchar`), dar la salida (`--go`), ver el resultado (`--resultado`) o traer el video (`--video`); nada de
+eso hace cómputo en la PC ni hace falta para que la carrera funcione. Sin el servicio, `--correr "Nombre"`
+arranca una carrera a mano (también espera el botón 1 o `--go`).
 
 **Dónde se va el CPU** (perfil de una carrera completa en `croquis+6`, PC x86, 1 núcleo): antes de optimizar,
 la ventana dinámica (Python + numpy, 20 veces por segundo) costaba **12.7 s de 32.5 s**, más que YuNet

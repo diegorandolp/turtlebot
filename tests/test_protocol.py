@@ -153,3 +153,20 @@ class DetTests(unittest.TestCase):
         self.assertEqual(P.unpack_det(P.unpack(P.pack_det(TOKEN, 1.0, []), TOKEN)[1])[1], [])
         with self.assertRaises(P.ProtocolError):
             P.unpack_det(P.unpack(P.pack_det(TOKEN, 1.0, cajas), TOKEN)[1][:-3])
+
+
+class Create3Tests(unittest.TestCase):
+    """AUDIO / LIGHT (PC -> robot) y BUTTON (robot -> PC): correr sin PC."""
+
+    def test_audio(self):
+        notas = [(880, 150), (0, 100), (1047, 400)]
+        kind, payload = P.unpack(P.pack_audio(TOKEN, 7, notas), TOKEN)
+        self.assertEqual(kind, P.AUDIO)
+        self.assertEqual(P.unpack_audio(payload), (7, notas))
+
+    def test_light_y_button(self):
+        kind, payload = P.unpack(P.pack_light(TOKEN, 3, 0, 255, 0, 20000), TOKEN)
+        self.assertEqual((kind, P.unpack_light(payload)), (P.LIGHT, (3, 0, 255, 0, 20000)))
+        kind, payload = P.unpack(P.pack_button(TOKEN, 5.5, 1), TOKEN)
+        self.assertEqual(kind, P.BUTTON)
+        self.assertEqual(P.unpack_button(payload)[1], 1)

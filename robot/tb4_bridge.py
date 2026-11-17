@@ -133,6 +133,18 @@ class Bridge(Node):
             self.undock_client = ActionClient(self, Undock, "/undock")
         except ImportError:
             self.get_logger().warn("irobot_create_msgs no disponible: sin dock/undock ni estado del dock")
+        # Botones, parlante y anillo de luces de la Create 3: para correr SIN PC (salida con el boton 1,
+        # aviso de llegada con luces y notas). Ver robot/desplegar_carrera.sh.
+        self.pub_audio = self.pub_luz = None
+        self._botones = {}
+        try:
+            from irobot_create_msgs.msg import AudioNoteVector, InterfaceButtons, LightringLeds
+            self.AudioNoteVector, self.LightringLeds = AudioNoteVector, LightringLeds
+            self.create_subscription(InterfaceButtons, "/interface_buttons", self.on_buttons, qos_profile_sensor_data)
+            self.pub_audio = self.create_publisher(AudioNoteVector, "/cmd_audio", 10)
+            self.pub_luz = self.create_publisher(LightringLeds, "/cmd_lightring", 10)
+        except ImportError:
+            self.get_logger().warn("irobot_create_msgs: sin botones, audio ni luces")
 
         self.create_timer(1.0 / CONTROL_HZ, self.control_step)
         self.create_timer(1.0 / TELEMETRY_STATUS_HZ, self.send_status)
@@ -206,6 +218,12 @@ class Bridge(Node):
                     self.pending.append((kind, addr, req_id, None))
                 else:
                     self.pending.append((None, addr, req_id, "otra PC esta conduciendo"))
+            elif kind == P.AUDIO:
+                req_id, notas = P.unpack_audio(payload)
+                self.pending.append((P.AUDIO, addr, req_id, notas))
+            elif kind == P.LIGHT:
+                req_id, r, g, b, ms = P.unpack_light(payload)
+                self.pending.append((P.LIGHT, addr, req_id, (r, g, b, ms)))
 
     def take_control(self, addr, now):
         """Llamar con self.lock tomado. True si addr puede conducir."""
@@ -246,6 +264,59 @@ class Bridge(Node):
             if conf >= self.args.nn_conf:
                 cajas.append((max(0.0, cx - w / 2), max(0.0, cy - h / 2), min(1.0, cx + w / 2), min(1.0, cy + h / 2), conf))
         self.broadcast(P.pack_det(self.token, stamp, cajas))
+
+    # ---------- Create 3: botones, parlante, luces ----------
+
+    def on_buttons(self, msg):
+        """irobot_create_msgs/InterfaceButtons: se manda BUTTON al apretar (flanco), no mientras se sostiene."""
+        stamp = time.time()
+        for num, campo in ((1, "button_1"), (2, "button_2"), (0, "button_power")):
+            pres = bool(getattr(msg, campo).is_pressed)
+            if pres and not self._botones.get(num, False):
+                self.get_logger().info(f"Boton {num} apretado")
+                self.broadcast(P.pack_button(self.token, stamp, num))
+            self._botones[num] = pres
+
+    def tocar(self, addr, req_id, notas):
+        if self.pub_audio is None:
+            self.reply(addr, req_id, False, "sin audio (irobot_create_msgs)")
+            return
+        from builtin_interfaces.msg import Duration
+        from irobot_create_msgs.msg import AudioNote
+        msg = self.AudioNoteVector()
+        msg.append = False
+        for hz, ms in notas:
+            n = AudioNote()
+            n.frequency = int(hz)
+            n.max_runtime = Duration(sec=int(ms // 1000), nanosec=int((ms % 1000) * 1_000_000))
+            msg.notes.append(n)
+        self.pub_audio.publish(msg)
+        self.reply(addr, req_id, True, f"{len(notas)} notas")
+
+    def pintar(self, addr, req_id, r, g, b, ms):
+        if self.pub_luz is None:
+            self.reply(addr, req_id, False, "sin luces (irobot_create_msgs)")
+            return
+        from irobot_create_msgs.msg import LedColor
+        msg = self.LightringLeds()
+        msg.override_system = not (r == 0 and g == 0 and b == 0)
+        msg.leds = [LedColor(red=int(r), green=int(g), blue=int(b)) for _ in range(6)]
+        self.pub_luz.publish(msg)
+        if ms and msg.override_system:                      # volver al sistema solo (timer de una vez)
+            t = []
+
+            def apagar():
+                self._apagar_luz()
+                t[0].cancel()
+            t.append(self.create_timer(ms / 1000.0, apagar))
+        self.reply(addr, req_id, True, "ok")
+
+    def _apagar_luz(self):
+        from irobot_create_msgs.msg import LedColor
+        msg = self.LightringLeds()
+        msg.override_system = False
+        msg.leds = [LedColor() for _ in range(6)]
+        self.pub_luz.publish(msg)
 
     def on_odom(self, msg):
         p, q, t = msg.pose.pose.position, msg.pose.pose.orientation, msg.twist.twist
@@ -296,6 +367,10 @@ class Bridge(Node):
                 self.start_photo(addr, req_id, *extra)
             elif kind in (P.DOCK, P.UNDOCK):
                 self.start_dock(kind, addr, req_id)
+            elif kind == P.AUDIO:
+                self.tocar(addr, req_id, extra)
+            elif kind == P.LIGHT:
+                self.pintar(addr, req_id, *extra)
             else:
                 self.reply(addr, req_id, False, extra)
         self.check_photo_timeout()

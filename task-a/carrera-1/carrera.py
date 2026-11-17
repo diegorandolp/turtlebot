@@ -249,6 +249,26 @@ def ventana(engine, nav, pos, ultima, robot, sim, t_rel, camtxt):
     return out
 
 
+def senal_robot(robot, que):
+    """Aviso con el hardware de la Create 3 (robot real; en el simulador no hace nada): anillo de luces y notas
+    en su parlante. 'salida' = azul + nota corta; 'hecho' = verde + melodia subiendo; 'fallo' = rojo + 2 graves.
+    Es la unica forma de avisar SIN PC: el TurtleBot 4 Lite no tiene pantalla y la Raspberry no tiene parlante."""
+    if not hasattr(robot, "audio"):
+        return
+    try:
+        if que == "salida":
+            robot.luz(0, 0, 255, 2000)
+            robot.audio([(880, 150)])
+        elif que == "hecho":
+            robot.luz(0, 255, 0, 20000)
+            robot.audio([(523, 150), (659, 150), (784, 150), (1047, 400)])
+        else:
+            robot.luz(255, 0, 0, 20000)
+            robot.audio([(220, 400), (0, 100), (220, 400)])
+    except Exception as e:                                       # noqa: BLE001  (puente viejo, sin irobot_create_msgs)
+        print("[aviso] luces/audio del robot:", e, flush=True)
+
+
 def anuncio(nav):
     """Lo que se dice al llegar a A: la palabra del QR (reglas del laboratorio) o, sin QR, el nombre."""
     if nav.palabra:
@@ -401,6 +421,9 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
                 print(f"\n==== {texto} ====\n", flush=True)
                 if not args.mudo:                                        # la voz no lee bien "_" ni "-"
                     anunciar(texto.replace("_", " ").replace("-", " "), imprimir=False)
+                senal_robot(robot, "hecho" if (nav.palabra or nav.nombre) else "fallo")
+                if args.resultado_archivo:                               # en el robot: queda escrito aunque no haya PC
+                    Path(args.resultado_archivo).write_text(texto + "\n", encoding="utf-8")
             # ---- ventana (y video) ----
             grabar = grab is not None and grab.toca(now)
             if gui or grabar or (args.png and nav.estado == HECHO):
@@ -422,13 +445,23 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
                     nav.empezar(now, pos[2])
             elif not sim:
                 time.sleep(0.02)
-            if args.go_archivo and nav.estado == PAUSA and now >= t_go_archivo:
-                t_go_archivo = now + 0.5                                 # sin ventana (robot): la salida la da un archivo
-                ga = Path(args.go_archivo)
-                if ga.exists():
-                    ga.unlink()
+            if nav.estado == PAUSA and now >= t_go_archivo:
+                t_go_archivo = now + 0.3
+                dar_salida = False
+                if args.go_archivo and Path(args.go_archivo).exists():     # sin ventana (robot): un archivo
+                    Path(args.go_archivo).unlink()
+                    dar_salida = True
+                if args.go_boton and hasattr(robot, "boton") and robot.boton() == 1:   # o el boton 1 de la Create 3
+                    dar_salida = True
+                if dar_salida:
+                    if args.buscar_archivo and Path(args.buscar_archivo).exists():
+                        # a quien buscar se decide en la competencia: se lee del archivo al dar la salida
+                        quien = Path(args.buscar_archivo).read_text(encoding="utf-8").strip()
+                        if quien:
+                            nav.cfg.buscar = nombre_en_galeria(quien, rec.nombres)
                     nav.empezar(now, pos[2])
-                    print("[go] salida dada por", ga, flush=True)
+                    senal_robot(robot, "salida")
+                    print(f"[go] salida dada; busco a {nav.cfg.buscar or '(la unica foto)'}", flush=True)
             if t_hecho is not None and (not gui or sim) and now - t_hecho > 1.0:
                 break
             if nav.t_inicio is not None and now - nav.t_inicio > max_t:
@@ -508,6 +541,10 @@ def parse(argv=None):
     ap.add_argument("--go", action="store_true", help="empezar sin esperar la tecla g")
     ap.add_argument("--go-archivo", default=None, metavar="RUTA",
                     help="sin ventana (en el robot): empezar cuando aparezca este archivo (robot/desplegar_carrera.sh --go)")
+    ap.add_argument("--go-boton", action="store_true", help="sin PC: empezar al apretar el boton 1 de la Create 3")
+    ap.add_argument("--buscar-archivo", default=None, metavar="RUTA",
+                    help="leer a quien buscar de este archivo al dar la salida (sin PC: se escribe antes de la carrera)")
+    ap.add_argument("--resultado-archivo", default=None, metavar="RUTA", help="escribir el anuncio en este archivo al terminar")
     ap.add_argument("--undock", action="store_true", help="sacar del dock al empezar (retrocede solo)")
     ap.add_argument("--vel", type=float, default=0.30, help="velocidad maxima en m/s (defecto 0.30; el robot llega a 0.31)")
     ap.add_argument("--temprano", action="store_true", help="volver apenas se sabe quien es (sin terminar de acercarse a B)")

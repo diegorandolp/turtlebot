@@ -102,6 +102,7 @@ class TB4Client:
         self.lock = threading.Lock()
         self._scan = self._pose = self._status = None
         self._det = None         # (stamp, [(x0, y0, x1, y1, conf)], recibido): caras detectadas EN la camara
+        self._boton = None       # (boton, recibido): ultimo boton de la Create 3 apretado
         self._cmd = (0.0, 0.0)
         self._cmd_time = 0.0
         self._seq = 0
@@ -166,6 +167,20 @@ class TB4Client:
         if img is None:
             raise RuntimeError("JPEG recibido no se pudo decodificar")
         return img
+
+    def boton(self):
+        """Ultimo boton de la Create 3 apretado (1, 2, 0 = power) y lo consume; None si ninguno desde la ultima vez.
+        Sirve para dar la salida sin PC: robot/tb4_bridge.py lo manda al apretarlo."""
+        b, self._boton = self._boton, None
+        return None if b is None else b[0]
+
+    def audio(self, notas, timeout=3.0):
+        """Toca notas [(hz, ms), ...] en el parlante de la Create 3 (el unico parlante del TurtleBot 4 Lite)."""
+        return self._request(lambda r: P.pack_audio(self.token, r, notas), timeout)["text"]
+
+    def luz(self, r, g, b, ms=0, timeout=3.0):
+        """Pinta el anillo de luces de la Create 3 (0..255 cada uno); r = g = b = 0 lo devuelve al sistema."""
+        return self._request(lambda r_: P.pack_light(self.token, r_, r, g, b, ms), timeout)["text"]
 
     def undock(self, timeout=30.0):
         """Saca el robot del dock (retrocede solo). Devuelve el mensaje del robot."""
@@ -259,6 +274,9 @@ class TB4Client:
         elif kind == P.DET:
             stamp, cajas = P.unpack_det(payload)
             self._det = (stamp, cajas, now)
+        elif kind == P.BUTTON:
+            _, boton = P.unpack_button(payload)
+            self._boton = (boton, now)
         elif kind == P.STATUS:
             _, bat, docked, flags, driver, front, rear, n = P.unpack_status(payload)
             self._status = Status(

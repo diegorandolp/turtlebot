@@ -1,0 +1,34 @@
+# Tarea A SIN PC: la carrera arranca sola al encender el TurtleBot 4 Lite y espera el BOTON 1 de la Create 3.
+# Instalar desde la PC: robot/desplegar_carrera.sh --servicio   (lo copia a /etc/systemd/system/ y lo habilita)
+#
+# Flujo el dia de la competencia (sin laptop, sin Wi-Fi):
+#   1. Encender el robot en A. Esperan: turtlebot4.service (ROS, LiDAR, camara), el puente (tb4_udp.service o el
+#      que arranque robot/tb4_inicio.sh) y este servicio, que carga los modelos y queda en PAUSA (anillo normal).
+#   2. A quien buscar: en ~/turtlebot/BUSCAR.txt (se lee al apretar el boton; se escribe antes por SSH o se deja
+#      escrito con robot/desplegar_carrera.sh --buscar "Nombre Apellido"; vacio = la unica foto de la meta).
+#   3. Apretar el BOTON 1 (el de un punto): anillo azul + nota = salida (sale del dock solo).
+#   4. Al volver a A: anillo VERDE + melodia = hecho (o ROJO + 2 graves si fallo). El anuncio queda en
+#      ~/turtlebot/RESULTADO.txt, en ~/turtlebot/carrera.log y en el video (~/turtlebot/task-a/carrera-1/corridas/videos/).
+#      Si hay un parlante USB en la Raspberry y espeak-ng instalado, ademas lo DICE en voz alta.
+#   5. Para otra carrera: apretar otra vez el boton 1 (el servicio se reinicia solo al terminar).
+[Unit]
+Description=TurtleBot 4 - Tarea A (carrera-1) en el robot, salida con el boton 1
+After=network.target turtlebot4.service
+Wants=turtlebot4.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/turtlebot
+Environment=PYTHONUNBUFFERED=1
+# espera al puente UDP local (hasta 3 min) y arranca en PAUSA
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 90); do python3 -c "from tb4.client import TB4Client; TB4Client(\"127.0.0.1\").wait_ready(1.5)" 2>/dev/null && exit 0; sleep 2; done; exit 1'
+ExecStart=/usr/bin/python3 task-a/carrera-1/carrera.py 127.0.0.1 --no-gui --undock --video --go-boton --go-archivo GO \
+    --buscar-archivo BUSCAR.txt --resultado-archivo RESULTADO.txt --cam-periodo 0.25
+StandardOutput=append:/home/ubuntu/turtlebot/carrera.log
+StandardError=append:/home/ubuntu/turtlebot/carrera.log
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

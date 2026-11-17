@@ -9,8 +9,10 @@ Formato de cada datagrama (little-endian):
   token     = primeros 8 bytes de sha256(clave del grupo); evita que el robot obedezca
               paquetes de otro grupo que use el mismo puerto (no es seguridad real).
 
-PC -> robot:  HELLO, BYE, CMD(seq, v, w), PHOTO(req, calidad[, camara]), DOCK(req), UNDOCK(req)
-Robot -> PC:  SCAN, ODOM, STATUS, IMG (trozos de un JPEG), EVENT (respuestas), DET (caras detectadas en la camara)
+PC -> robot:  HELLO, BYE, CMD(seq, v, w), PHOTO(req, calidad[, camara]), DOCK(req), UNDOCK(req),
+              AUDIO(req, notas), LIGHT(req, color)
+Robot -> PC:  SCAN, ODOM, STATUS, IMG (trozos de un JPEG), EVENT (respuestas), DET (caras detectadas en la camara),
+              BUTTON (boton de la Create 3)
 
 Convencion de ejes (base_link del robot): x adelante, y izquierda, angulos en radianes,
 0 = frente, positivo = izquierda (antihorario). El puente ya aplica el giro del LiDAR.
@@ -29,12 +31,17 @@ DEFAULT_KEY = "grupo3"
 
 # Tipos de paquete
 HELLO, BYE, CMD, PHOTO, DOCK, UNDOCK = b"H", b"B", b"C", b"P", b"D", b"U"
+AUDIO, LIGHT = b"A", b"L"  # PC -> robot: tocar notas en el parlante de la Create 3 / color del anillo de luces
 SCAN, ODOM, STATUS, IMG, EVENT = b"s", b"o", b"t", b"i", b"e"
 DET = b"n"                 # robot -> PC: cajas de caras detectadas EN la camara (chip Myriad X de la OAK-D)
+BUTTON = b"b"              # robot -> PC: boton de la Create 3 apretado (1, 2 o 0 = power)
 
 _HEADER = struct.Struct("<4sBc8s")
 _CMD = struct.Struct("<Iff")              # seq, v (m/s), w (rad/s)
 _REQ = struct.Struct("<I")                # id de peticion
+_NOTA = struct.Struct("<HH")              # frecuencia Hz, duracion ms (AUDIO: _REQ + n x _NOTA)
+_LIGHT = struct.Struct("<IBBBH")          # id, r, g, b, ms (0 = hasta nuevo aviso; r=g=b=0 = devolver al sistema)
+_BUTTON = struct.Struct("<dB")            # stamp, boton
 _PHOTO = struct.Struct("<IB")             # id, calidad JPEG (formato original: siempre la preview)
 _PHOTO_CAM = struct.Struct("<IBB")        # id, calidad JPEG, camara (PREVIEW | HD)
 _SCAN = struct.Struct("<dfffH")           # stamp, angle_min, angle_inc, range_max, n
@@ -119,6 +126,34 @@ def pack_req(kind, token, req_id):
 
 def unpack_req(payload):
     return _REQ.unpack_from(payload)[0]
+
+
+def pack_audio(token, req_id, notas):
+    """notas: [(hz, ms), ...] (<= 40). hz = 0 es silencio."""
+    notas = list(notas)[:40]
+    return pack(AUDIO, token, _REQ.pack(req_id) + b"".join(_NOTA.pack(int(h), int(m)) for h, m in notas))
+
+
+def unpack_audio(payload):
+    req_id = _REQ.unpack_from(payload)[0]
+    n = (len(payload) - _REQ.size) // _NOTA.size
+    return req_id, [_NOTA.unpack_from(payload, _REQ.size + i * _NOTA.size) for i in range(n)]
+
+
+def pack_light(token, req_id, r, g, b, ms=0):
+    return pack(LIGHT, token, _LIGHT.pack(req_id, r, g, b, ms))
+
+
+def unpack_light(payload):
+    return _LIGHT.unpack_from(payload)
+
+
+def pack_button(token, stamp, boton):
+    return pack(BUTTON, token, _BUTTON.pack(stamp, boton))
+
+
+def unpack_button(payload):
+    return _BUTTON.unpack_from(payload)
 
 
 # ---------- Robot -> PC ----------
