@@ -304,3 +304,14 @@ class FlechasDeColor(unittest.TestCase):
                 img[100:150, 100:150] = cv2.resize(tex, (50, 50), interpolation=cv2.INTER_AREA)
                 ok += any(f.dir == d for f in det(cv2.GaussianBlur(img, (3, 3), 0)))
         self.assertEqual(ok, 8)
+
+
+class Laberinto(unittest.TestCase):
+    def test_laberintos_largos_con_senales_y_meta(self):
+        for k in range(1, 6):
+            m = construir(f"laberinto:{k}+6")
+            self.assertEqual(len(m.rostros), 6)
+            self.assertTrue(all(abs(p[0] - 5.6) < 1e-6 for _, _, p in m.rostros))   # fotos en la pared derecha
+            self.assertLess(m.inicio[0], 0.8)                                          # A en la columna izquierda
+            self.assertGreaterEqual(sum("flecha" in c.tipo for c in m.carteles), 2)   # senales en los giros
+        self.assertEqual(construir("laberinto:1:6:5:0.7+6").nombre.split("+")[0], "laberinto:1:6:5:0.7")

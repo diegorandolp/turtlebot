@@ -110,19 +110,23 @@ garcia` sirve). Si no está en la galería, el programa avisa **antes** de arran
    reconocida). **Con `--buscar` solo votan las fotos tomadas de frente**: cada voto pesa cos² del ángulo
    con la normal de la pared y de más de 55° no vota (de refilón ArcFace confunde personas y descartaba a
    la buscada).
-3. **FILA: recorrer la fila de fotos.** En cuanto hay fotos vistas y ninguna es todavía la buscada, el
-   robot no va foto por foto: arma puntos de vista **de frente a la pared**, cada 0.3 m a lo largo de la
-   fila (y 0.6 m más allá de las puntas, por si hay fotos que aún no vio), a la distancia que deja libre el
-   LiDAR (0.75 → 0.45 m), y los recorre empezando por la punta más cercana: llega, gira hacia la pared, mira
-   0.7 s y sigue. Salta los puntos inalcanzables y los que están frente a una foto que ya se sabe que es
-   otra. Apenas una foto resulta ser la buscada, deja la fila y va por ella (ACERCAR → RECONOCER → LEER_QR).
+3. **FILA: al ver una cara, se está en la zona de la meta.** Las demás fotos están al lado, en fila sobre la
+   misma pared, así que el robot no sigue explorando ni va foto por foto adonde las vio: arma puntos de vista
+   **de frente a la pared** (a la distancia que deja libre el LiDAR, 0.75 → 0.45 m) y las mira **una por
+   una**. Primero sigue la fila hacia su lado (un punto cada 0.45 m, lo que separa dos fotos, hasta 2.7 m),
+   luego las fotos ya vistas y por último el otro lado. El primer punto de un lado sin ninguna foto (o
+   inalcanzable) corta ese lado: ahí se acaba la fila. En cada punto gira hacia la pared y mira 0.7 s; salta
+   los que están frente a una foto que ya se sabe que es otra. Apenas una foto resulta ser la buscada, deja
+   la fila y va por ella (ACERCAR → RECONOCER → LEER_QR).
    Si la ve de costado y sin votos, se pone de frente antes de decidir.
 4. Frente a la buscada pasa a **LEER_QR**: se pone **de frente** (a 0.6 m sobre la normal de la pared,
    medida con el LiDAR: de costado la cara se reconoce pero el QR no se lee), y repite: quieto → mira 12° a
-   cada lado → se acerca hasta 0.40 m → se aleja un poco. Pide fotos **HD** mientras tanto (ver la tabla
-   del lector abajo). Si la HD no llega (la cámara no se lanzó con `camara_rgb.sh --hd`), tras 2 fallos
-   sigue con la preview y lo avisa en la ventana: nunca se queda sin cámara frente a la meta. A los
-   **30 s** sin leerlo vuelve igual y anuncia el nombre.
+   cada lado → se acerca hasta 0.40 m → se aleja un poco. **No se pega a la foto**: si la cara sale de más
+   de 110 px o cortada arriba (la cámara va a 13 cm del suelo y mira hacia arriba), deja de acercarse y se
+   aleja hasta verla entera; de muy cerca el reconocedor fallaba y el QR, aunque leído, no se aceptaba.
+   Pide fotos **HD** mientras tanto (ver la tabla del lector abajo). Si la HD no llega (la cámara no se
+   lanzó con `camara_rgb.sh --hd`), tras 2 fallos sigue con la preview y lo avisa en la ventana: nunca se
+   queda sin cámara frente a la meta. A los **30 s** sin leerlo vuelve igual y anuncia el nombre.
 5. **Nunca acepta una palabra dudosa.** Un QR cuenta solo si, **en la misma foto**, está en la esquina de
    abajo de una cara que **esa foto** reconoce como la buscada (con 0.08 de ventaja sobre la segunda
    persona). Se acepta un texto leído **≥ 2 veces**, con 2 de ventaja sobre cualquier otro, y que nunca se
@@ -150,7 +154,8 @@ programa dice qué lector usa.
 **A qué foto pertenece un QR** (`qr._de_que_cara`): las fotos están en fila a la misma altura, así que lo
 que separa el QR propio del de la vecina es la distancia **horizontal** al centro de la cara, en anchos de
 cara `w`: el propio queda a ≤ ~1.6 w (retrato: ~0.8 w; cuerpo entero: ~1.6 w) y el de la vecina, aunque
-estén casi pegadas, a ≥ 2.5 w. Se asigna si está debajo de la cara y a ≤ 2.0 w de lado.
+estén casi pegadas, a ≥ 2.5 w. Se asigna si está debajo del centro de la cara (≥ 0.35 w: en un primer
+plano la esquina de la hoja se monta sobre el mentón) y a ≤ 2.0 w de lado.
 
 **Mundos del simulador** con varias fotos: `+K` al final de `croquis`, `denso:N` o `lab:N` pone K fotos en
 fila (personas distintas de la galería, excluidas al reconocer), cada una con un **QR real**
@@ -169,16 +174,15 @@ leer)"), abajo a la derecha el **recorte del QR** aceptado, y al llegar a A el c
 
 | Mundos | Éxitos | Palabra equivocada | Choques | Tiempo (mediana) |
 |---|---:|---:|---:|---:|
-| `croquis`, `croquis+6`, `lab:1..8+6`, `denso:1..4+6` | **14/14** | 0 | 0 | 72 s |
-| los mismos tipos con `--duro` (odometría con sesgo, cámara lenta) y fotos casi pegadas (`+6:0.3`) | 10/12 | 0 | 0 | 80 s |
-| sin `--buscar`: `aleatorio:1..6` con y sin flechas, `croquis`, `denso:1..7` | 19/20 | — | 0 | 50–70 s |
+| `croquis+6`, `lab:1..8+6`, `denso:1..3+6`, `laberinto:1..12+6` (7×6), `laberinto:N:6:5+6`, `laberinto:N:8:6+6` | **28/28** | 0 | 0 | 59 s |
+| `croquis+6`, `lab:1..3+6`, `laberinto:1..4+6` con `--duro` (odometría con sesgo, cámara lenta) | 7/8 | 0 | 0 | 63 s |
+| sin `--buscar`: `aleatorio:1..6` con y sin flechas, `croquis`, `denso:1..8` | **20/20** | — | 0 | 43–62 s |
 
-Con el croquis fiel y la buscada en cualquier lugar de la fila los tiempos suben (antes 19 s de mediana:
-el croquis tenía un atajo recto y la buscada solía ser la primera foto). En `croquis+6` el robot lee las 3
-flechas, llega a la meta a los ~20 s, recorre la fila y vuelve con la palabra en 80–110 s. Los fallos con
-`--duro`: `lab:2+6` leyó bien la palabra pero volvió a > 35 cm de A (odómetro con sesgo) y `denso:5+6` no
-encontró la meta en 3 min; sin `--buscar`, `denso:3` (fallo conocido: B detrás de un tabique).
-**Éxito** = la palabra correcta, de vuelta a < 35 cm de A.
+Los videos de las 28 corridas con fotos y QR y la lámina con sus trayectorias (`trayectorias.py`) están en
+`Claude outputs/videos/` (fuera del repo). En los laberintos de 7×6 el robot tarda 60–145 s: lee de 2 a 9
+señales, llega a la meta en 25–90 s y recorre la fila de fotos. El fallo con `--duro` (`laberinto:1+6`)
+leyó bien la palabra y no llegó a A en 3 min (odómetro con sesgo en un laberinto largo). **Éxito** = la
+palabra correcta, de vuelta a < 35 cm de A.
 
 **Por validar con el robot real**: el tamaño del QR en la foto real (aquí 10 cm), si todas las fotos lo
 tienen en la misma esquina, la separación entre fotos, la altura de las fotos (la cámara está a ~13 cm del
@@ -219,9 +223,27 @@ JPEG: lo que ve el robot en el video es lo que vería en el laboratorio.
 | `croquis[:W:H]` | El croquis del circuito (dibujo a mano: 9 cajas), **fiel al dibujo**, en W×H m (defecto 4×4): A abajo a la izquierda, una repisa sobre A que obliga a subir, tabiques largos y la **meta en el pasillo de la derecha (~1.15 m), con entrada por arriba** (**supuesto**: el dibujo no marca B). Las 3 señales del dibujo están en su sitio (izq, der, der) y son **de colores al azar** (negro, azul, rojo o verde). No hay atajo recto: antes las cajas que cerraban el paso se achicaban y el robot iba en línea recta a la primera foto; ya no |
 | `lab:N[:W:H]` | Sala con 7–11 cajas al azar y la **meta en una pared al azar** (derecha, arriba o abajo) |
 | `denso:N[:W:H]` | Igual que `lab:N` pero con la meta siempre en la pared derecha, a menudo detrás de un tabique |
+| `laberinto:N[:C:F[:celda]]` | **Laberinto largo** de C×F celdas de 0.8 m (defecto 7×6 = 5.6×4.8 m; `laberinto:N:6:5` = 4.8×4 m) con tabiques de cartón de 15 cm: **pasillos de ~0.65 m** (el robot mide 0.34 m), callejones sin salida y algunos ciclos. `:0.7` = pasillos de 0.55 m, que ya no pasa: el puente del robot frena a 0.28 m y en un cruce de 0.55 m queda todo a menos de eso. A en la columna izquierda, lo más lejos posible (por el laberinto) de la meta, que es una sala de ≥ 2.6 m × 2 celdas de fondo en la pared derecha con las fotos en fila. Una señal de color en cada giro del camino correcto (con pared enfrente: si ahí el laberinto seguía derecho, se cierra). `laberinto:N:8:6` es más grande todavía |
 
 En todos **queda un paso de al menos ~0.48 m** de A a B (el robot mide 0.34 m). En `croquis` no se achica
 nada: si una caja cerrara el paso, es un error del mundo y el programa lo dice.
+
+**Dónde girar con una señal: acercarse a ella.** La flecha está en la pared de enfrente, justo donde hay que
+doblar. Al verla (a ≤ 2.2 m) el robot "arma" el giro y **va hacia la señal, lo más cerca que puede** (hasta
+que la tiene a < 0.35 m o la pared a < 0.5 m), y **recién ahí** dobla hacia donde indica, por la abertura
+de ese lado. Antes doblaba en la primera abertura con la señal a < 1.4 m por delante: en un laberinto
+tomaba la abertura anterior, una celda antes, y se perdía. Mientras va hacia una señal no se distrae
+mirando a los costados. Tres detalles más que salieron de los laberintos:
+
+- **Un vistazo a la pared antes de doblar.** Cuando va a doblar por una abertura y tiene una pared a
+  0.5–1.6 m de frente (y ya usó alguna señal: en un circuito con señales hay una en cada giro), se pone de
+  frente a esa pared, mira 0.6 s y vuelve al rumbo que traía. La cámara ve 40°: llegando en diagonal, la
+  señal quedaba fuera del cuadro y el robot doblaba por la abertura equivocada.
+- **Una señal vale otra vez** si, 15 s después de usarla o pasarla de largo, se la tiene de frente a
+  < 1.2 m. En un laberinto la misma señal se ve desde varios pasillos antes de llegar a ella; antes quedaba
+  "usada" la primera vez y nunca más se obedecía.
+- Dos fotos de flechas a menos de **0.7 m** son la misma señal (antes 1.0 m: en celdas de 0.8 m unía dos
+  señales distintas, y los votos de una tapaban a la otra).
 
 **Señales de colores: se lee la forma.** En el laboratorio las flechas pueden no ser negras. El detector
 (`flechas.py`, `forma=True`, por defecto) pasa la imagen a `min(B, G, R)`: una flecha de cualquier color
@@ -288,7 +310,7 @@ cambia (+0.2 s de media); la mediana sube porque las salas nuevas que ahora se r
 
 | Mejora | Archivo | Qué hace |
 |---|---|---|
-| Volver exacto a A | `relocalizar.py` | Al empezar guarda el scan del LiDAR en A. Al volver, cuando el robot cree estar a < 2 m de A, alinea el scan actual con ese (ICP 2D) y corrige dónde está A en el mapa. Solo acepta alineaciones buenas (error medio < 6 cm, > 45 % de puntos emparejados, corrección < 0.8 m y < 30°). ~4 ms por scan (tabla de vecino más cercano). `--sin-relocalizar` lo apaga |
+| Volver exacto a A | `relocalizar.py` | Al empezar guarda el scan del LiDAR en A. Al volver, cuando el robot cree estar a < 2 m de A, alinea el scan actual con ese (ICP 2D) y corrige dónde está A en el mapa. Solo acepta alineaciones buenas (error medio < 6 cm, > 45 % de puntos emparejados, corrección < 0.8 m y < 30°; una corrección de más de 0.3 m la tienen que dar dos scans seguidos: en un laberinto de pasillos iguales ICP puede "encajar" una celda corrida). ~4 ms por scan (tabla de vecino más cercano). `--sin-relocalizar` lo apaga |
 | Nombre seguro | `navegador.py` (`_seguro`, `_reconocer`) | Decide por votación solo con probabilidad ≥ 0.97: ya no basta con juntar 8 fotos (las caras lejanas llegaban a 8 enseguida). Si se acaba el tiempo de reconocer y nunca vio la cara de ≥ 24 px, se acerca más antes de decidir; desde los 140 s de carrera decide con lo que tenga, para no perder el intento |
 | Plan B mira las paredes de verdad | `mirada.py` (`CoberturaFrontal`) | El explorador del plan B lleva la cuenta de qué paredes miró la cámara. Antes contaba como vista una pared mirada de refilón o de lejos (y el espacio libre delante de la pared la tapaba al dilatar), así que daba la búsqueda por terminada sin haber mirado la pared de la foto. Ahora una pared cuenta solo si una cara de 11 cm se habría visto con ≥ 20 px (ancho ≈ 343 · 0.11 · cos(incidencia) / distancia, incidencia ≤ 60°). +2 salas en normal, +1 en `--duro`, ninguna perdida. `--cobertura-simple` vuelve a la de auto-1 |
 | (opcional) Mirada lateral | `mirada.py` (`MiradaLateral`), `--mirada-desde S` | Desde los S s de carrera, en la ida, gira a mirar paredes cercanas de costado que no se vieron de frente. Con `--mirada-desde 35`: 38/41 en `--duro` (+2) pero pierde `denso:10` en normal y algunas carreras tardan hasta 76 s más. **Apagada por defecto** |
@@ -417,7 +439,8 @@ real lo que el simulador supone. Los comandos van desde la raíz del repositorio
 | `qr.py` | Leer los QR de una foto (cerca de cada cara, con varias variantes de la imagen) y saber de qué cara es cada uno. Basado en el lector de Sofía (`laberinto-1/qr.py`) |
 | `flechas.py` | Detector genérico de flechas por su forma, de cualquier color (`forma=True`: canal `min(B,G,R)`) |
 | `simulador.py` | Robot simulado con LiDAR, freno del puente y cámara renderizada (misma API que `TB4Client`) |
-| `mundos.py` | Mundos fijos (`demo`, `demo-sin-flechas`, `sala`, `croquis[:W:H]`), circuitos aleatorios (`aleatorio:N[:sin]`) y salas con cajas (`denso:N[:W:H]`, `lab:N[:W:H]` con la meta en una pared al azar), con cajas de cartón y piso gris; `+K[:S]` = K fotos con QR en la meta |
+| `trayectorias.py` | Lámina con la trayectoria de cada corrida de un banco (`banco_pruebas.py --json X --opciones --traza`) sobre el plano del mundo |
+| `mundos.py` | Mundos fijos (`demo`, `demo-sin-flechas`, `sala`, `croquis[:W:H]`), circuitos aleatorios (`aleatorio:N[:sin]`) y salas con cajas (`denso:N[:W:H]`, `lab:N[:W:H]` con la meta en una pared al azar), laberintos largos (`laberinto:N[:C:F]`), con cajas de cartón y piso gris; `+K[:S]` = K fotos con QR en la meta |
 | `relocalizar.py` | Volver exacto a A: alinea el scan del LiDAR con el guardado en A |
 | `mirada.py` | Plan B que mira las paredes de frente (`CoberturaFrontal`) y mirada lateral opcional |
 | `banco_pruebas.py` | Muchas carreras en paralelo y su resumen; `--videos` guarda el video de las que fallan o chocan; `--duro` |

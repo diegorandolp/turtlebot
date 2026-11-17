@@ -49,7 +49,9 @@ def una(mundo, opciones, max_t, videos=None, videos_todos=False, modo_duro=False
     try:
         res = carrera.correr(robot, args, sim=True, gui=False, mundo=m, max_t=max_t)
     except Exception as e:                                  # un fallo de codigo no tumba el banco
+        import traceback
         res = dict(mundo=mundo, exito=False, estado="ERROR", error=f"{type(e).__name__}: {e}", tiempo=None,
+                   traza_error=traceback.format_exc().strip().splitlines()[-6:],
                    choques=None, acierto=None, en_a=None, nombre=None, persona=m.persona, log=[])
     res["cpu_s"] = round(time.time() - t, 1)
     if modo_duro:

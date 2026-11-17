@@ -400,7 +400,7 @@ def _cartel_meta(pared, t, W, H, ancho, z0, alto, tex):
 
 
 def _sala_con_cajas(W, H, cajas, inicio, t_b, rng, persona, nombre_mundo, semilla, achicar=True, n_rostros=1,
-                    sep=None, pared="der", rango=None, extra=()):
+                    sep=None, pared="der", rango=None, extra=(), paso=PASO_MIN):
     """Sala W x H (m) con cajas (cx, cy, ancho, largo, alto) y la meta en la pared `pared` (der | arriba |
     abajo) alrededor de la coordenada t_b a lo largo de esa pared. Una caja que cerraria el camino de A a
     la meta se achica (o se quita): siempre hay un paso de al menos 2 * PASO_MIN. Con achicar=False las
@@ -416,14 +416,17 @@ def _sala_con_cajas(W, H, cajas, inicio, t_b, rng, persona, nombre_mundo, semill
     t_b = ts[k_obj]
     metas = [_en_pared(pared, t, W, H, 0.30) for t in ts]                # donde termina de acercarse a cada foto
     paredes = ex.paredes(0.5, CARTON)                                     # el laboratorio: cajas de carton
+    def d_rect(cx, cy, w, h, px, py):                                    # distancia del rectangulo al punto
+        return math.hypot(max(abs(px - cx) - w / 2, 0.0), max(abs(py - cy) - h / 2, 0.0))
+
     for (cx, cy, w, h, alto) in cajas:
-        if min(math.hypot(cx - mx, cy - my) for mx, my in metas) < 0.35:
-            continue                                                        # nada pegado delante de una foto
+        if min(d_rect(cx, cy, w, h, mx, my) for mx, my in metas) < (0.15 if not achicar else 0.5):
+            continue   # nada delante de una foto: hay que poder ponerse a 0.5-0.75 m de frente (laberinto: pasillo)
         for _ in range(8 if achicar else 1):
             x0, y0, x1, y1 = max(cx - w / 2, 0.0), max(cy - h / 2, 0.0), min(cx + w / 2, W), min(cy + h / 2, H)
             prueba = ex.libre.copy()
             ex.rect(x0, y0, x1, y1, valor=False)
-            if all(_camino_libre(ex, inicio[:2], m, radio=PASO_MIN) for m in metas):
+            if all(_camino_libre(ex, inicio[:2], m, radio=paso) for m in metas):
                 col = tuple(int(np.clip(c * rng.uniform(0.8, 1.15), 0, 255)) for c in CARTON)   # carton, mas o menos claro
                 _caja(paredes, ((x0 + x1) / 2, (y0 + y1) / 2), (x1 - x0) / 2, (y1 - y0) / 2, alto, col)
                 break
@@ -541,18 +544,123 @@ def sala_densa(semilla, W=4.0, H=4.0, persona=None, n_rostros=1, sep=None, pared
             continue
         cajas.append((cx, cy, w, h, float(rng.uniform(0.25, 0.5))))
     t_b = y_b
-    if pared == "azar":
+    azar = pared == "azar"
+    if azar:
         pared = str(rng.choice(["der", "arriba", "abajo"]))
     if pared != "der":                                                      # arriba / abajo: lejos de A
         t_b = float(rng.uniform(0.55, 0.85) * W)
-    nombre = f"denso:{semilla}" if pared == "der" else f"lab:{semilla}"
+    nombre = f"lab:{semilla}" if azar else f"denso:{semilla}"
     return _sala_con_cajas(W, H, cajas, inicio, t_b, rng, persona, nombre, semilla, n_rostros=n_rostros,
                            sep=sep, pared=pared)
 
 
+def laberinto(semilla, C=7, F=6, celda=0.8, persona=None, n_rostros=1, sep=None, flechas=True):
+    """Laberinto largo de C x F celdas de `celda` m (defecto 7 x 6 de 0.8 m = 5.6 x 4.8 m) hecho con tabiques
+    de carton de 15 cm: pasillos de ~0.65 m (el robot mide 0.34), callejones sin salida y algunos ciclos (mas de un camino). La
+    meta es una sala de >= 2.6 m (3-4 celdas) por 2 celdas de fondo en la pared derecha, con las fotos en fila; A es la celda de la columna
+    izquierda mas lejana (por el laberinto) de la meta, mirando hacia donde sigue el camino. Con `flechas`,
+    una senal (de color al azar) en cada giro del camino correcto donde hay pared enfrente."""
+    rng = np.random.default_rng(semilla)
+    W, H, t = C * celda, F * celda, 0.15
+    ns = min(F, max(3, math.ceil(2.6 / celda)))            # celdas de la sala de la meta (6 fotos en >= 2.6 m)
+    nc = 1 if celda >= 1.1 else 2                          # columnas: la sala tiene >= 1.3 m de fondo para mirar
+    f0 = int(rng.integers(0, F - ns + 1))                  # filas f0..f0+ns-1 de las ultimas nc columnas
+    sala = {(C - 1 - j, f0 + k) for k in range(ns) for j in range(nc)}
+    # muros entre celdas: abiertos[(a, b)] con a < b
+    abiertos = set()
+    visto, pila = {(0, int(rng.integers(F)))}, []
+    pila.append(next(iter(visto)))
+    while pila:                                              # DFS: laberinto perfecto (un solo camino)
+        c = pila[-1]
+        vec = [(c[0] + dx, c[1] + dy) for dx, dy in DIRS
+               if 0 <= c[0] + dx < C and 0 <= c[1] + dy < F and (c[0] + dx, c[1] + dy) not in visto]
+        if not vec:
+            pila.pop()
+            continue
+        v = vec[int(rng.integers(len(vec)))]
+        abiertos.add(tuple(sorted((c, v))))
+        visto.add(v)
+        pila.append(v)
+    for k in range(ns):                                      # la sala de la meta no tiene tabiques adentro
+        for j in range(nc):
+            if k + 1 < ns:
+                abiertos.add(((C - 1 - j, f0 + k), (C - 1 - j, f0 + k + 1)))
+            if j + 1 < nc:
+                abiertos.add(((C - 2 - j, f0 + k), (C - 1 - j, f0 + k)))
+    todos = [tuple(sorted(((i, j), (i + dx, j + dy)))) for i in range(C) for j in range(F) for dx, dy in ((1, 0), (0, 1))
+             if i + dx < C and j + dy < F]
+    cerrados = [m for m in todos if m not in abiertos]
+    for k in rng.permutation(len(cerrados))[:max(1, len(cerrados) // 8)]:   # algunos ciclos
+        abiertos.add(cerrados[k])
+
+    def vecinos(c):
+        return [(c[0] + dx, c[1] + dy) for dx, dy in DIRS
+                if tuple(sorted((c, (c[0] + dx, c[1] + dy)))) in abiertos]
+
+    # A: la celda de la columna 0 mas lejana de la sala (BFS)
+    dist, cola = {c: 0 for c in sala}, list(sala)
+    for c in cola:
+        for v in vecinos(c):
+            if v not in dist:
+                dist[v] = dist[c] + 1
+                cola.append(v)
+    a_celda = max(((0, j) for j in range(F)), key=lambda c: dist.get(c, -1))
+    camino = [a_celda]
+    while camino[-1] not in sala:
+        camino.append(min(vecinos(camino[-1]), key=lambda v: dist.get(v, 1e9)))
+    if flechas:
+        # en cada giro del camino correcto tiene que haber pared enfrente para poner la senal (como en el
+        # laboratorio: la flecha se ve de frente al llegar). Si ahi el laberinto sigue derecho, se cierra:
+        # el camino correcto no cambia y lo que queda detras sigue siendo callejon o ciclo
+        for k in range(1, len(camino) - 1):
+            u = (camino[k][0] - camino[k - 1][0], camino[k][1] - camino[k - 1][1])
+            v = (camino[k + 1][0] - camino[k][0], camino[k + 1][1] - camino[k][1])
+            if u != v and camino[k] not in sala:
+                abiertos.discard(tuple(sorted((camino[k], (camino[k][0] + u[0], camino[k][1] + u[1])))))
+    centro = lambda c: np.array([(c[0] + 0.5) * celda, (c[1] + 0.5) * celda])   # noqa: E731
+    d0 = camino[1][0] - camino[0][0], camino[1][1] - camino[0][1]
+    ca = centro(a_celda)
+    inicio = (float(ca[0] + 0.1 * d0[0]), float(ca[1] + 0.1 * d0[1]), math.atan2(d0[1], d0[0]))
+    # tabiques: uno por muro cerrado (cajas de t de ancho), con las esquinas tapadas
+    cajas = []
+    for m in todos:
+        if m in abiertos:
+            continue
+        (i, j), (i2, j2) = m
+        alto = float(rng.uniform(0.3, 0.5))
+        if i2 != i:                                          # muro vertical en x = (i+1) * celda
+            cajas.append(((i + 1) * celda, (j + 0.5) * celda, t, celda + t, alto))
+        else:                                                # muro horizontal en y = (j+1) * celda
+            cajas.append(((i + 0.5) * celda, (j + 1) * celda, celda + t, t, alto))
+    extra = []
+    if flechas:
+        for k in range(1, len(camino) - 1):
+            u = np.array(camino[k], float) - np.array(camino[k - 1], float)
+            v = np.array(camino[k + 1], float) - np.array(camino[k], float)
+            giro = u[0] * v[1] - u[1] * v[0]
+            adelante = (camino[k][0] + int(u[0]), camino[k][1] + int(u[1]))
+            hay_pared = (not (0 <= adelante[0] < C and 0 <= adelante[1] < F)
+                         or tuple(sorted((camino[k], adelante))) not in abiertos)
+            if giro == 0 or not hay_pared:
+                continue
+            dir_ = "izq" if giro > 0 else "der"
+            pp = np.array([-u[1], u[0]])
+            pc = centro(camino[k]) + u * (celda / 2 - t / 2)
+            lado = 0.20
+            col = COLORES_SENAL[int(rng.integers(len(COLORES_SENAL)))]
+            tex = textura_flecha(dir_, rng, estilo="giro", lado_m=lado, color=col)
+            extra.append(cartel_en_pared(pc - pp * 0.35, pc + pp * 0.35, 0.5, lado, 0.05, lado, tex, "flecha:" + dir_))
+    t_b = (f0 + ns / 2) * celda
+    return _sala_con_cajas(W, H, cajas, inicio, t_b, rng, persona, f"laberinto:{semilla}:{C}:{F}" + ("" if celda == 0.8 else f":{celda:g}"), semilla,
+                           achicar=False, n_rostros=n_rostros, sep=sep, pared="der",
+                           rango=(f0 * celda + 0.35, (f0 + ns) * celda - 0.35), extra=extra,
+                           paso=min(PASO_MIN, (celda - t) / 2 - 0.1))   # pasillos angostos: holgura en la rejilla
+
+
 def construir(nombre, persona=None):
     """Mundos: demo | demo-sin-flechas | sala[:N] | aleatorio:N[:sin] | croquis[:W:H] | denso:N[:W:H] | lab:N
-    (lab = sala con cajas y la meta en la pared de la derecha, arriba o abajo).
+    (lab = sala con cajas y la meta en la pared de la derecha, arriba o abajo) | laberinto:N[:C:F] (laberinto
+    largo de C x F celdas de 0.8 m, defecto 7 x 6; con :celda, otro ancho: laberinto:1:6:5:0.7).
     Con "+K" al final (solo croquis y denso), la meta tiene K fotos con QR: p. ej. croquis+6, denso:3+6.
     "+K:S" fija la separacion entre fotos en S m (defecto 0.40-0.55 al azar): denso:3+6:0.3 = mas juntas."""
     n_rostros, sep = 1, None
@@ -562,7 +670,7 @@ def construir(nombre, persona=None):
             k, sep = k.split(":", 1)
             sep = float(sep)
         n_rostros = int(k)
-        if not nombre.startswith(("croquis", "denso", "lab")):
+        if not nombre.startswith(("croquis", "denso", "lab", "laberinto")):
             raise ValueError(f"'+{k}' (varias fotos con QR) solo existe para croquis y denso, no para {nombre}")
     partes = nombre.split(":")
     if partes[0] == "demo":
@@ -578,6 +686,12 @@ def construir(nombre, persona=None):
         W = float(partes[1]) if len(partes) > 1 else 4.0
         H = float(partes[2]) if len(partes) > 2 else W
         return croquis(W, H, persona=persona, n_rostros=n_rostros, sep=sep)
+    if partes[0] == "laberinto":                                 # laberinto:N[:C:F[:celda]] (celdas de 0.8 m)
+        semilla = int(partes[1]) if len(partes) > 1 else 0
+        C = int(partes[2]) if len(partes) > 2 else 7
+        F = int(partes[3]) if len(partes) > 3 else 6
+        celda = float(partes[4]) if len(partes) > 4 else 0.8
+        return laberinto(semilla, C, F, celda, persona=persona, n_rostros=n_rostros, sep=sep)
     if partes[0] == "lab":                                       # lab:N = denso con la meta en cualquier pared
         semilla = int(partes[1]) if len(partes) > 1 else 0
         return sala_densa(semilla, 4.0, 4.0, persona, n_rostros=n_rostros, sep=sep, pared="azar")
@@ -588,4 +702,4 @@ def construir(nombre, persona=None):
         return sala_densa(semilla, W, H, persona, n_rostros=n_rostros, sep=sep)
     raise ValueError(f"mundo desconocido: {nombre} "
                      "(demo | demo-sin-flechas | sala | aleatorio:N[:sin] | croquis[:W:H] | denso:N[:W:H], "
-                     "lab:N, y +K al final de croquis/denso/lab para K fotos con QR)")
+                     "lab:N, laberinto:N[:C:F], y +K al final para K fotos con QR)")

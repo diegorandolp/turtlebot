@@ -207,7 +207,7 @@ def panel_mapa(engine, nav, pos, lado=400, radio_m=5.0):
     p = px(x, y)
     cv2.circle(img, p, max(3, int(0.17 / res * s)), (0, 0, 255), 2)
     cv2.line(img, p, (int(p[0] + 18 * math.cos(th)), int(p[1] - 18 * math.sin(th))), (0, 0, 255), 2)
-    if nav.libres is not None and nav.estado not in (PAUSA, HECHO, RECONOCER):
+    if nav.libres is not None and nav.phi is not None and nav.estado not in (PAUSA, HECHO, RECONOCER):
         a = th + nav.phi
         cv2.line(img, p, (int(p[0] + 35 * math.cos(a)), int(p[1] - 35 * math.sin(a))), (0, 255, 255), 1)
     return img

@@ -75,7 +75,7 @@ def icp(src, ref, init=(0.0, 0.0, 0.0), iters=30, d_max=(0.5, 0.25, 0.12), tol=1
     n = len(src)
     if n < 20 or len(ref) < 20:
         return tx, ty, th, math.inf, 0.0
-    err, frac = math.inf, 0.0
+    frac = 0.0
     for k in range(iters):
         dm = d_max[min(k * len(d_max) // iters, len(d_max) - 1)]          # umbral que se va cerrando
         p = src @ _rot(th).T + np.array([tx, ty])
@@ -93,7 +93,6 @@ def icp(src, ref, init=(0.0, 0.0, 0.0), iters=30, d_max=(0.5, 0.25, 0.12), tol=1
         # componer: nueva = (R, dt) o (rot(th), t)
         t_new = R @ np.array([tx, ty]) + dt
         tx, ty, th = float(t_new[0]), float(t_new[1]), th + dth
-        err = float(d[sel].mean())
         if abs(dth) < tol and np.hypot(*dt) < tol:
             break
     # error final con el umbral mas estricto
@@ -118,6 +117,7 @@ class Relocalizador:
         self.d_usar = d_usar                 # solo se intenta si el robot cree estar a menos de esto de A
         self.ultimo = None                   # (tx, ty, th, err, frac) de la ultima alineacion aceptada
         self.n_ok = self.n_mal = 0
+        self._pendiente = None               # correccion grande que espera que otro scan la confirme
 
     def referencia(self, scan, pose=(0.0, 0.0, 0.0)):
         """Guarda el scan de A, llevado al marco del mapa con `pose` (casi (0, 0, 0): el robot esta en A)."""
@@ -145,6 +145,14 @@ class Relocalizador:
         if not (err < self.err_max and frac > self.frac_min and dpos < self.max_corr and dth < self.max_giro):
             self.n_mal += 1
             return None
+        if dpos > 0.3:
+            # una correccion grande puede ser un "encaje" falso (pasillos paralelos repetidos: ICP se corre una
+            # celda): se acepta solo si dos scans seguidos coinciden en ella
+            if self._pendiente is None or math.hypot(tx - self._pendiente[0], ty - self._pendiente[1]) > 0.12:
+                self._pendiente = (tx, ty)
+                self.n_mal += 1
+                return None
+        self._pendiente = None
         self.n_ok += 1
         self.ultimo = (tx, ty, th, err, frac)
         # A (origen del marco de A) visto desde el robot: inv(pose real) aplicada a (0, 0)

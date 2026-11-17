@@ -159,6 +159,7 @@ class Senal:
     t0: float = 0.0
     t1: float = 0.0
     usada: bool = False
+    t_usada: float = -1e9       # cuando se uso (o se paso de largo)
     px_max: float = 0.0
 
     def dir(self):
@@ -173,8 +174,9 @@ class Senal:
 class Senales:
     """Flechas vistas, agrupadas por posicion: varias fotos de la misma senal votan su sentido."""
 
-    def __init__(self, radio=1.0, min_n=2):
-        self.radio = radio
+    def __init__(self, radio=0.7, min_n=2):
+        self.radio = radio                  # m: fotos a menos de esto son la misma senal (en un laberinto de celdas
+        #                                     de 0.8 m dos senales distintas pueden estar a 0.9 m: con 1.0 se unian)
         self.min_n = min_n                  # fotos para confirmar una senal (3 si se aceptan flechas de color)
         self.lista = []
 
@@ -197,11 +199,11 @@ class Senales:
         s.px_max = max(s.px_max, o.px)
         return s
 
-    def usar_cerca(self, xy, radio=1.6):
+    def usar_cerca(self, xy, radio=0.8, t=0.0):
         """Al tomar una flecha, las que esten cerca son la misma senal vista desde otro sitio."""
         for s in self.lista:
             if np.linalg.norm(s.xy - np.asarray(xy)) < radio:
-                s.usada = True
+                s.usada, s.t_usada = True, t
 
     def pendientes(self):
         return [s for s in self.lista if not s.usada and s.confirmada(self.min_n) and s.dir() in (IZQ, DER, ARRIBA)]

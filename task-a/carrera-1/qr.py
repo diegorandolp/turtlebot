@@ -138,7 +138,7 @@ def _de_que_cara(caja_qr, cajas_caras):
     distancia HORIZONTAL al centro de la cara, medida en anchos de cara `w`. En un retrato la hoja mide ~3 w
     y el QR de 10 cm (~1.4 w) queda con su centro a ~0.8 w a un costado; en una foto de cuerpo entero la
     cara es mas chica respecto a la hoja (~5 w) y el QR queda a ~1.6 w. El QR de la foto vecina, aunque
-    esten casi pegadas, queda a >= 2.5 w. Se asigna si el QR esta debajo de la cara (>= 0.6 w) y a <= 2.0 w
+    esten casi pegadas, queda a >= 2.5 w. Se asigna si el QR esta debajo del centro de la cara (>= 0.35 w: en un primer plano la esquina de la hoja se monta sobre el menton) y a <= 2.0 w
     de lado; si dos caras cumplen, la mas centrada sobre el QR."""
     if not cajas_caras:
         return None
@@ -148,6 +148,6 @@ def _de_que_cara(caja_qr, cajas_caras):
         w = max(float(w), 1.0)
         dx = abs(qx - (x + w / 2)) / w
         dy = (qy - (y + h / 2)) / w
-        if dx <= 2.0 and dy >= 0.6 and dx < dx_mejor:
+        if dx <= 2.0 and dy >= 0.35 and dx < dx_mejor:    # 0.35: en un primer plano el QR se monta sobre la cara
             mejor, dx_mejor = i, dx
     return mejor
