@@ -74,6 +74,9 @@ class Mundo:
     luz: float = 1.0                        # ganancia global de la iluminacion
     semilla: int = 0
     foto_b: str = ""                        # 'Carpeta/foto.jpg' de la galeria usada en el cartel
+    fotos_excluir: tuple = ()               # todas las fotos de la galeria pegadas en el mundo (no se reconocen)
+    qr: str = ""                            # texto del QR de la persona buscada ("" = mundo sin QR)
+    rostros: list = field(default_factory=list)   # [(nombre, texto del QR, (x, y))] de cada foto de la meta
 
 
 def _cross(ax, ay, bx, by):

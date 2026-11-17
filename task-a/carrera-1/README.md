@@ -1,5 +1,11 @@
 # Tarea A · carrera-1 · De A a B y de vuelta, lo más rápido posible
 
+> **Reglas del laboratorio (las que valen):** en la meta hay **varias fotos (~6)** y cada una tiene un **QR
+> en una esquina de abajo**. Le decimos al robot a quién buscar (`--buscar "Nombre Apellido"`); lee el QR
+> de esa foto, vuelve a A y **dice la palabra del QR**. Ver
+> [Reglas del laboratorio: varias fotos y QR](#reglas-del-laboratorio-varias-fotos-y-qr---buscar).
+> Sin `--buscar`, el programa hace lo del enunciado original (una foto en B, anuncia el nombre).
+
 El robot sale de **A**, encuentra la foto de **B** (con o sin flechas que indiquen el camino), reconoce a
 la persona, **vuelve a A** y anuncia su nombre. La nota de la competencia depende del **tiempo** frente a
 los demás grupos, así que todo está pensado para ir rápido: es un método **arriesgado**, con los riesgos
@@ -81,6 +87,64 @@ LiDAR (7 Hz) + odometría ─► mapa (slam-1) y "carriles" libres ────�
    - **EXPLORAR** (plan B): el explorador de fronteras y cobertura de cámara de auto-1.
 4. **Reconocimiento**: ver [reconocimiento/README.md](../../reconocimiento/README.md) (ArcFace con OpenCV,
    galería de 17 personas, ≥ 98 % de acierto por foto desde caras de 24 px).
+
+## Reglas del laboratorio: varias fotos y QR (`--buscar`)
+
+```bash
+python task-a/carrera-1/carrera.py --undock --buscar "Nombre Apellido"      # ROBOT REAL (arranca en pausa: g)
+python task-a/carrera-1/carrera.py --sim --mundo croquis+6 --go --video      # simulador: 6 fotos con QR
+python task-a/carrera-1/probar_vision.py --qr --hd                           # ver QR y caras sin mover el robot
+```
+
+El nombre se escribe como en `datos/rostros/` (sin importar tildes, mayúsculas ni guiones bajos: `alvaro
+garcia` sirve). Si no está en la galería, el programa avisa **antes** de arrancar y muestra los nombres.
+
+**Cómo lo hace** (`navegador.py`, `percepcion.py`, `qr.py`):
+
+1. **Cada foto vista es una "candidata"** con su propia votación de quién es. Dos caras son la misma foto
+   si están a menos de 0.35 m en el mapa, salvo que cada una sea claramente de una persona distinta (fotos
+   casi pegadas u odómetro corrido no las mezclan).
+2. Una candidata pasa a **"la buscada"** si su votación lo dice con p ≥ 0.97, y a **"otra"** si dice otra
+   persona con p ≥ 0.97 (solo de cerca: con la cara de ≥ 20 px; de lejos podría ser la buscada mal
+   reconocida). Se va primero a la que más se parece a la buscada.
+3. Si la foto resultó ser **otra** y no queda ninguna pendiente, **mira 55° a cada lado** (las fotos de la
+   meta están en fila) y después sigue buscando.
+4. Frente a la buscada pasa a **LEER_QR**: se pone **de frente** (a 0.6 m sobre la normal de la pared,
+   medida con el LiDAR: de costado la cara se reconoce pero el QR no se lee), y repite: quieto → mira 12° a
+   cada lado → se acerca hasta 0.40 m → se aleja un poco. Pide fotos **HD** mientras tanto (el QR se lee
+   desde ~1.4 m en HD, ~0.5 m en la preview). A los **30 s** sin leerlo vuelve igual y anuncia el nombre.
+5. **Nunca acepta una palabra dudosa.** Un QR cuenta solo si, **en la misma foto**, está en la esquina de
+   abajo de una cara que **esa foto** reconoce como la buscada (con 0.08 de ventaja sobre la segunda
+   persona). Se acepta un texto leído **≥ 2 veces**, con 2 de ventaja sobre cualquier otro, y que nunca se
+   vio junto a otra persona. No se usa la posición en el mapa (con el odómetro corrido las fotos vecinas
+   se mezclan). Mejor volver con el nombre que con una palabra equivocada.
+6. En A anuncia **"La palabra es …"** (voz, pantalla y registro).
+
+**A qué foto pertenece un QR** (`qr._de_que_cara`): las fotos están en fila a la misma altura, así que lo
+que separa el QR propio del de la vecina es la distancia **horizontal** al centro de la cara, en anchos de
+cara `w`: el propio queda a ≤ ~1.6 w (retrato: ~0.8 w; cuerpo entero: ~1.6 w) y el de la vecina, aunque
+estén casi pegadas, a ≥ 2.5 w. Se asigna si está debajo de la cara y a ≤ 2.0 w de lado.
+
+**Mundos del simulador** con varias fotos: `+K` al final de `croquis` o `denso:N` pone K fotos en fila en
+la pared derecha (personas distintas de la galería, excluidas al reconocer), cada una con un **QR real**
+(`cv2.QRCodeEncoder`, 10 cm, esquina izquierda o derecha al azar) y una palabra que el robot no conoce.
+`+K:S` fija la separación en S m (defecto 0.40–0.55): `denso:3+6:0.3` = fotos casi pegadas.
+
+**Resultados** (simulador, límite de 3 min):
+
+| Mundos | Éxitos | Palabra equivocada | Choques | Tiempo (mediana) |
+|---|---:|---:|---:|---:|
+| `croquis+6`, `denso:1..19+6` | 20/20 | 0 | 0 | 23 s |
+| fotos casi pegadas (`+6:0.3`) y otras salas, con `--duro` (2 corridas) | 18/20 y 18/20 | 0 | 0 | 46–50 s |
+| sin `--buscar` (`aleatorio:1..6` con y sin flechas, `croquis`, `denso`): sin cambios | 18/18 | — | 0 | 53 s (pasillos) |
+
+Los fallos con `--duro` no son del QR: uno no encontró la meta en 3 min y otro volvió a 0.4 m de A con el
+odómetro desviado 3.7 %. **Éxito** = la palabra correcta, de vuelta a < 35 cm de A.
+
+**Por validar con el robot real**: el tamaño del QR en la foto real (aquí 10 cm), si todas las fotos lo
+tienen en la misma esquina, la separación entre fotos, la altura de las fotos (la cámara está a ~13 cm del
+suelo) y que las fotos HD lleguen (`camara_rgb.sh --hd`). Para eso: `probar_vision.py --qr --hd` con el
+robot quieto frente a las fotos.
 
 ## Pruebas en simulación
 
@@ -191,6 +255,8 @@ python task-a/carrera-1/carrera.py --sim --mundo aleatorio:12:sin --go
 python task-a/carrera-1/carrera.py --sim --mundo sala --hd        # sala abierta, fotos HD
 python task-a/carrera-1/banco_pruebas.py --n 40                   # 80 carreras (con y sin flechas), resumen
 python task-a/carrera-1/banco_pruebas.py --n 20 --opciones --temprano    # comparar opciones
+python task-a/carrera-1/carrera.py --sim --mundo croquis+6 --go --video    # reglas del lab: 6 fotos con QR
+python task-a/carrera-1/banco_pruebas.py --mundos croquis+6 denso:1+6 denso:2+6 --videos videos/
 
 # simulación por ROS (camino real, sin robot): en una terminal...
 task-a/carrera-1/sim_ros.sh demo                                  # (PYTHON=~/.venvs/tb4/bin/python si hace falta)
@@ -201,6 +267,8 @@ python task-a/carrera-1/carrera.py 127.0.0.1 --go
 robot/tb4_inicio.sh                                               # hora + ROS + puente (copia el puente nuevo)
 python task-a/carrera-1/probar_vision.py                          # ver flechas/caras/nombres sin mover el robot
 python task-a/carrera-1/carrera.py --undock                       # arranca EN PAUSA; g = empezar
+python task-a/carrera-1/probar_vision.py --qr --hd                # ver QR y de que cara es cada uno (robot quieto)
+python task-a/carrera-1/carrera.py --undock --buscar "Nombre Apellido"    # reglas del lab: lee su QR
 ```
 
 **Teclas** (ventana enfocada): `g` empezar · **espacio = PAUSA (parada inmediata)** · `q`/Esc salir.
@@ -212,6 +280,10 @@ A; línea amarilla = rumbo elegido) y, en el simulador, la vista real desde arri
 
 | Opción | Defecto | Para qué |
 |---|---|---|
+| `ip` | 192.168.0.104 | IP del robot (`127.0.0.1` si el programa corre EN el robot) |
+| `--buscar NOMBRE` | — | Reglas del laboratorio: persona a buscar entre las fotos de la meta; lee su QR y anuncia la palabra. En el simulador con `+K`, la del mundo |
+| `--sin-qr` | no | Con `--buscar`: no leer el QR (anuncia el nombre) |
+| `--qr-sin-hd` | no | No pedir fotos HD para leer el QR (sin HD hay que acercarse a ~0.5 m) |
 | `--vel` | 0.30 | Velocidad máxima de la ida (m/s; la vuelta va a 0.31) |
 | `--temprano` | no | Volver apenas se sabe quién es, sin terminar de acercarse a B |
 | `--hd` | no | Fotos 1280×720 (cámara lanzada con `task-a/camara/camara_rgb.sh --hd`) |
@@ -287,17 +359,20 @@ real lo que el simulador supone. Los comandos van desde la raíz del repositorio
 |---|---|
 | `carrera.py` | Programa principal (robot real o `--sim`): sensores, cámara, navegador, ventana, anuncio, registro |
 | `navegador.py` | Estados y control: carriles, ventana dinámica, flechas, acercarse, votar, volver |
-| `percepcion.py` | De cada foto: caras y flechas con rumbo y posición en el mapa; memoria de B y de las señales; cámara en otro hilo (robot real) |
+| `percepcion.py` | De cada foto: caras, flechas y QR con rumbo y posición en el mapa; memoria de cada foto y de las señales; cámara en otro hilo (robot real) |
+| `qr.py` | Leer los QR de una foto (cerca de cada cara, con varias variantes de la imagen) y saber de qué cara es cada uno. Basado en el lector de Sofía (`laberinto-1/qr.py`) |
 | `flechas.py` | Detector genérico de flechas (banco de flechas sintéticas) |
 | `simulador.py` | Robot simulado con LiDAR, freno del puente y cámara renderizada (misma API que `TB4Client`) |
-| `mundos.py` | Mundos fijos (`demo`, `demo-sin-flechas`, `sala`, `croquis[:W:H]`), circuitos aleatorios (`aleatorio:N[:sin]`) y salas con cajas (`denso:N[:W:H]`) |
+| `mundos.py` | Mundos fijos (`demo`, `demo-sin-flechas`, `sala`, `croquis[:W:H]`), circuitos aleatorios (`aleatorio:N[:sin]`) y salas con cajas (`denso:N[:W:H]`); `+K[:S]` = K fotos con QR en la meta |
+| `relocalizar.py` | Volver exacto a A: alinea el scan del LiDAR con el guardado en A |
+| `mirada.py` | Plan B que mira las paredes de frente (`CoberturaFrontal`) y mirada lateral opcional |
 | `banco_pruebas.py` | Muchas carreras en paralelo y su resumen; `--videos` guarda el video de las que fallan o chocan; `--duro` |
 | `video.py` | Grabador del video del recorrido (tiempo de la carrera, en otro hilo, nunca tumba la carrera) |
 | `medir_cpu.py` | Cuánto CPU usa cada pieza: para decidir si todo cabe en la Raspberry del robot |
 | `robot_ros_sim.py`, `sim_ros.sh` | El simulador como robot ROS 2, con el puente real delante |
-| `probar_vision.py` | Ver la percepción en vivo sin mover el robot; guardar fotos para evaluar |
+| `probar_vision.py` | Ver la percepción en vivo sin mover el robot (con `--qr`, también los QR y de qué cara es cada uno); guardar fotos para evaluar |
 | `evaluar_flechas.py` | Acierto del detector de flechas sobre carpetas de fotos (izq/der/nada) |
-| `test_carrera.py`, `test_video.py` | Pruebas sin robot |
+| `test_carrera.py`, `test_video.py`, `test_mejoras.py`, `test_qr.py` | Pruebas sin robot (54; `test_qr.py`: lectura y asignación de QR, candidatas, reglas para aceptar la palabra, carrera completa en `croquis+6`) |
 
 Reutiliza de otras carpetas: el mapa de [slam-1](../slam-1) (`slam_core`), el planificador Dijkstra y el
 explorador de fronteras de [auto-1](../auto-1) (`planner`, `coverage`, `explorer`) y el reconocimiento de

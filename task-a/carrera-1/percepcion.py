@@ -3,8 +3,9 @@ Percepcion por camara (Tarea A, carrera-1): de cada foto saca las caras y las fl
 (angulo respecto al frente del robot) y su posicion en el mapa (rumbo + distancia que da el LiDAR en
 ese rumbo: la foto y las senales estan pegadas a una superficie que el LiDAR ve).
 
-  Percepcion.procesar(img, pose, scan) -> (caras, flechas)        listas de Obs
-  Objetivo     junta las caras vistas: donde esta B y la votacion de quien es
+  Percepcion.procesar(img, pose, scan, leer_qr=False) -> (caras, flechas, qrs)   listas de Obs
+  Objetivo     junta las caras vistas de UNA foto: donde esta y la votacion de quien es (con --buscar
+               hay una por cada foto de la meta; ver navegador.Carrera.ver_cara)
   Senales      junta las flechas vistas: cada senal con su posicion y su sentido confirmado
   CamaraHilo   (robot real) pide fotos sin parar en otro hilo y las procesa; el bucle de control
                solo recoge resultados, asi nunca se frena esperando la camara
@@ -17,11 +18,12 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from flechas import ARRIBA, DER, IZQ
+from qr import buscar_qrs
 
 
 @dataclass
 class Obs:
-    tipo: str                   # "cara" | "flecha"
+    tipo: str                   # "cara" | "flecha" | "qr"
     t: float                    # instante de la foto
     rumbo: float                # rad, + izquierda, respecto al frente del robot al tomar la foto
     dist: float                 # m hasta la superficie (LiDAR; si no hay lectura, por el tamano)
@@ -32,6 +34,8 @@ class Obs:
     res: object = None          # caras: reconocimiento.Resultado (si la cara es bastante grande)
     borde_sup: bool = False     # la cara toca el borde de arriba (al acercarse mas se sale de la foto)
     girando: bool = False       # foto tomada girando rapido: el rumbo y la distancia son poco fiables
+    texto: str = ""             # QR: lo que dice
+    cara: object = None         # QR: la Obs de la cara (de la misma foto) a la que pertenece, o None
 
 
 def distancia_lidar(scan, rumbo, ancho=math.radians(2.5)):
@@ -45,14 +49,18 @@ def distancia_lidar(scan, rumbo, ancho=math.radians(2.5)):
 
 
 class Percepcion:
-    def __init__(self, reconocedor, det_flechas, hfov=40.0, min_px_reconocer=10, cara_m=0.11, flecha_m=0.14):
+    def __init__(self, reconocedor, det_flechas, hfov=40.0, min_px_reconocer=10, cara_m=0.11, flecha_m=0.14,
+                 hfov_hd=None, qr_m=0.10):
         self.rec, self.det_fl = reconocedor, det_flechas
         self.hfov = math.radians(hfov)
+        self.hfov_hd = math.radians(hfov_hd) if hfov_hd else self.hfov   # fotos HD (16:9): otro campo de vision
+        self.qr_m = qr_m
         self.min_px = min_px_reconocer
         self.cara_m, self.flecha_m = cara_m, flecha_m     # tamanos supuestos, solo si el LiDAR no da distancia
 
     def _rumbo(self, u, W):
-        f = (W / 2) / math.tan(self.hfov / 2)
+        hfov = self.hfov_hd if W >= 600 else self.hfov          # la preview es 250x250; la HD, 1280x720
+        f = (W / 2) / math.tan(hfov / 2)
         return math.atan(((W - 1) / 2 - u) / f), f
 
     def _ubicar(self, u, W, px, tam_m, pose, scan, dth, rango=(0.5, 2.2)):
@@ -67,10 +75,11 @@ class Percepcion:
         x, y, th = pose
         return rumbo, d, (x + d * math.cos(th + rumbo), y + d * math.sin(th + rumbo))
 
-    def procesar(self, img, pose, scan, t, w=0.0, th_scan=None):
+    def procesar(self, img, pose, scan, t, w=0.0, th_scan=None, leer_qr=False):
         """pose = (x, y, yaw) al tomar la foto; th_scan = rumbo cuando se tomo `scan`.
         `w`: velocidad de giro (rad/s) al tomar la foto. Girando rapido las posiciones son poco
-        fiables (se marcan)."""
+        fiables (se marcan). `leer_qr`: buscar tambien los QR (cuesta: solo frente a la meta).
+        -> (caras, flechas, qrs)"""
         H, W = img.shape[:2]
         dth = 0.0 if th_scan is None else math.atan2(math.sin(pose[2] - th_scan), math.cos(pose[2] - th_scan))
         girando = abs(w) > 0.6
@@ -91,7 +100,14 @@ class Percepcion:
                 continue                                  # ojos, boca o ropa de la foto de B: no son flechas
             rumbo, d, xy = self._ubicar(u, W, f.lado, self.flecha_m, pose, scan, dth)
             flechas.append(Obs("flecha", t, rumbo, d, xy, f.lado, f.caja, dir=f.dir, girando=girando))
-        return caras, flechas
+        qrs = []
+        if leer_qr:
+            for q in buscar_qrs(img, cajas):
+                u = q.caja[0] + q.caja[2] / 2
+                rumbo, d, xy = self._ubicar(u, W, max(q.caja[2], 1), self.qr_m, pose, scan, dth, rango=(0.4, 1.8))
+                qrs.append(Obs("qr", t, rumbo, d, xy, q.caja[2], q.caja, girando=girando, texto=q.texto,
+                               cara=caras[q.cara] if q.cara is not None else None))
+        return caras, flechas, qrs
 
 
 # ---------------------------------------------------------------- memoria de lo visto
@@ -110,6 +126,9 @@ class Objetivo:
         self.ancho_max = 0.0
         self._pos = []              # posiciones recientes (sin las fotos tomadas girando)
         self._k = recientes
+        self.estado = "pendiente"   # con --buscar: pendiente | objetivo | otra
+        self.id = 0
+        self.t_ignorar = -1e9       # con --buscar: no elegirla hasta este instante (no se la encontro)
 
     def agregar(self, o, peso, pose=None):
         if not o.girando or self.xy is None:
@@ -194,6 +213,8 @@ class CamaraHilo:
 
     def __init__(self, robot, percepcion, sensores, hd=False):
         self.robot, self.per, self.sensores, self.hd = robot, percepcion, sensores, hd
+        self.qr = False                     # buscar QR en cada foto (frente a la meta)
+        self.hd_qr = False                  # ...y pedirlas en HD mientras tanto (el QR se lee de mas lejos)
         self.lock = threading.Lock()
         self.resultados = []
         self.ultima_img = None
@@ -213,7 +234,8 @@ class CamaraHilo:
                 continue
             (pose, scan, th_scan, w), t = self.sensores(), time.monotonic()
             try:
-                img = self.robot.photo(timeout=2.0, hd=True) if self.hd else self.robot.photo(timeout=2.0)
+                hd = self.hd or (self.qr and self.hd_qr)
+                img = self.robot.photo(timeout=2.0, hd=True) if hd else self.robot.photo(timeout=2.0)
             except Exception as e:                        # camara caida, en el dock, timeout
                 self.errores += 1
                 self.ultimo_error = f"{type(e).__name__}: {e}"[:80]
@@ -221,9 +243,9 @@ class CamaraHilo:
                 continue
             if pose is None:
                 continue
-            caras, flechas = self.per.procesar(img, pose, scan, t, w, th_scan)
+            caras, flechas, qrs = self.per.procesar(img, pose, scan, t, w, th_scan, leer_qr=self.qr)
             with self.lock:
-                self.resultados.append((t, img, caras, flechas))
+                self.resultados.append((t, img, caras, flechas, qrs))
                 self.ultima_img = (img, caras, flechas)
                 self.fotos += 1
                 self.t_ok = time.monotonic()

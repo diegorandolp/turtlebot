@@ -46,6 +46,36 @@ def textura_rostro(foto, ancho_m, rng):
     return tex, alto_m
 
 
+# Palabras de los QR del simulador. El robot NO las conoce: lee lo que diga el QR (en la competencia
+# las palabras pueden ser nuevas).
+PALABRAS_QR = ["alfa", "beta", "gamma", "delta", "omega", "phi", "rho", "sigma", "kappa", "lambda", "tau",
+               "zeta", "condor", "vicuna", "quinua", "huaca", "puma", "colibri", "lucuma", "chasqui"]
+
+
+def texto_qr(rng):
+    return f"milestone_{rng.choice(PALABRAS_QR)}_{int(rng.integers(10, 100))}"
+
+
+def imagen_qr(texto, lado_px):
+    """QR real (cv2.QRCodeEncoder) con su margen blanco, en BGR de lado_px x lado_px."""
+    q = cv2.QRCodeEncoder.create().encode(texto)
+    q = cv2.copyMakeBorder(q, 2, 2, 2, 2, cv2.BORDER_CONSTANT, value=255)
+    q = cv2.resize(q, (lado_px, lado_px), interpolation=cv2.INTER_NEAREST)
+    return cv2.cvtColor(q, cv2.COLOR_GRAY2BGR)
+
+
+def textura_rostro_qr(foto, ancho_m, rng, texto, qr_m=0.10, esquina=None):
+    """Foto impresa con el QR (de `qr_m` de lado, como los del laboratorio) pegado en una esquina de abajo."""
+    tex, alto_m = textura_rostro(foto, ancho_m, rng)
+    H, W = tex.shape[:2]
+    lado = min(int(qr_m * PX_M), W - 4, H - 4)
+    q = imagen_qr(texto, lado)
+    esquina = esquina or str(rng.choice(["izq", "der"]))
+    x0 = 2 if esquina == "izq" else W - lado - 2
+    tex[H - lado - 2:H - 2, x0:x0 + lado] = q
+    return tex, alto_m
+
+
 def textura_flecha(direccion, rng, estilo=None, lado_m=0.22, color=(25, 25, 25), aro=None):
     """Senal cuadrada de papel con una flecha (estilos variados). direccion: 'der' | 'izq' | 'arriba'."""
     estilo = estilo or rng.choice(["giro", "recta", "curva", "chevron"])
@@ -337,13 +367,29 @@ def sala(semilla=3, persona=None):
 PASO_MIN = 0.24          # radio con el que se exige que haya camino: deja pasos de >= ~0.48 m
 
 
-def _sala_con_cajas(W, H, cajas, inicio, y_b, rng, persona, nombre_mundo, semilla, achicar=True):
+def _posiciones_meta(H, y_b, k, rng, sep=None):
+    """y de k fotos en fila en la pared derecha, alrededor de y_b, separadas `sep` m (defecto: 0.40-0.55 al
+    azar), dentro de la sala."""
+    if k <= 1:
+        return [y_b]
+    sep = min(float(rng.uniform(0.40, 0.55)) if sep is None else sep, (H - 0.5) / (k - 1))
+    y0 = float(np.clip(y_b - sep * (k - 1) / 2, 0.25, H - 0.25 - sep * (k - 1)))
+    return [y0 + i * sep for i in range(k)]
+
+
+def _sala_con_cajas(W, H, cajas, inicio, y_b, rng, persona, nombre_mundo, semilla, achicar=True, n_rostros=1,
+                    sep=None):
     """Sala W x H (m) con cajas (cx, cy, ancho, largo, alto) y la foto de B en la pared derecha (x = W) a
     la altura y_b. Una caja que cerraria el camino de A a B se achica (o se quita): siempre hay un paso
-    de al menos 2 * PASO_MIN."""
+    de al menos 2 * PASO_MIN.
+    n_rostros > 1: la meta tiene esa cantidad de fotos en fila (personas distintas), cada una con un QR en
+    una esquina de abajo; la persona buscada es una de ellas al azar (mundo.persona, su QR en mundo.qr)."""
     ex = Excavadora()
     ex.rect(0.0, 0.0, W, H)
-    meta = (W - 0.30, y_b)                                              # donde termina de acercarse
+    ys = _posiciones_meta(H, y_b, n_rostros, rng, sep)
+    k_obj = int(rng.integers(len(ys))) if n_rostros > 1 else 0
+    y_b = ys[k_obj]
+    metas = [(W - 0.30, y) for y in ys]                                  # donde termina de acercarse a cada foto
     paredes = ex.paredes(0.5, (205, 205, 210))
     puestas = []
     for (cx, cy, w, h, alto) in cajas:
@@ -351,19 +397,47 @@ def _sala_con_cajas(W, H, cajas, inicio, y_b, rng, persona, nombre_mundo, semill
             x0, y0, x1, y1 = max(cx - w / 2, 0.0), max(cy - h / 2, 0.0), min(cx + w / 2, W), min(cy + h / 2, H)
             prueba = ex.libre.copy()
             ex.rect(x0, y0, x1, y1, valor=False)
-            if _camino_libre(ex, inicio[:2], meta, radio=PASO_MIN):
+            if all(_camino_libre(ex, inicio[:2], m, radio=PASO_MIN) for m in metas):
                 col = tuple(int(v) for v in rng.integers(50, 190, 3))
                 _caja(paredes, ((x0 + x1) / 2, (y0 + y1) / 2), (x1 - x0) / 2, (y1 - y0) / 2, alto, col)
                 puestas.append((x0, y0, x1, y1))
                 break
             ex.libre = prueba
             w, h = w * 0.8, h * 0.8                                         # no cabe: la caja un poco mas chica
-    nombre, foto = elegir_persona(rng, persona)
-    ancho_foto = rng.uniform(0.18, 0.28)
-    tex, alto_foto = textura_rostro(foto, ancho_foto, rng)
-    carteles = [cartel_en_pared((W, 0), (W, H), y_b / H, ancho_foto, rng.uniform(0.0, 0.12), alto_foto, tex, "rostro")]
-    return Mundo(paredes, inicio, carteles, [], (W, y_b), nombre, nombre_mundo, luz=float(rng.uniform(0.8, 1.1)),
-                 semilla=semilla, foto_b=ref_foto(foto))
+    if n_rostros <= 1:
+        nombre, foto = elegir_persona(rng, persona)
+        ancho_foto = rng.uniform(0.18, 0.28)
+        tex, alto_foto = textura_rostro(foto, ancho_foto, rng)
+        carteles = [cartel_en_pared((W, 0), (W, H), y_b / H, ancho_foto, rng.uniform(0.0, 0.12), alto_foto, tex, "rostro")]
+        return Mundo(paredes, inicio, carteles, [], (W, y_b), nombre, nombre_mundo, luz=float(rng.uniform(0.8, 1.1)),
+                     semilla=semilla, foto_b=ref_foto(foto), fotos_excluir=(ref_foto(foto),))
+    # varias fotos con QR: personas distintas, la buscada en la posicion k_obj
+    elegidas, usadas = [], set()
+    for i in range(len(ys)):
+        for _ in range(50):
+            nombre, foto = elegir_persona(rng, persona if i == k_obj else None)
+            if nombre not in usadas:
+                break
+        usadas.add(nombre)
+        elegidas.append((nombre, foto))
+    if elegidas[k_obj][0] != (persona or elegidas[k_obj][0]):
+        raise ValueError(f"no se pudo poner a {persona} en la meta")
+    carteles, rostros, textos = [], [], set()
+    z0 = float(rng.uniform(0.0, 0.10))                                    # misma altura para toda la fila
+    for (nombre, foto), y in zip(elegidas, ys):
+        t = texto_qr(rng)
+        while t in textos:
+            t = texto_qr(rng)
+        textos.add(t)
+        ancho_foto = float(rng.uniform(0.20, 0.26))
+        tex, alto_foto = textura_rostro_qr(foto, ancho_foto, rng, t)
+        carteles.append(cartel_en_pared((W, 0), (W, H), y / H, ancho_foto, z0, alto_foto, tex, "rostro"))
+        rostros.append((nombre, t, (W, y)))
+    nombre_obj, foto_obj = elegidas[k_obj]
+    return Mundo(paredes, inicio, carteles, [], (W, y_b), nombre_obj,
+                 f"{nombre_mundo}+{len(ys)}" + (f":{sep:g}" if sep else ""),
+                 luz=float(rng.uniform(0.8, 1.1)), semilla=semilla, foto_b=ref_foto(foto_obj),
+                 fotos_excluir=tuple(ref_foto(f) for _, f in elegidas), qr=rostros[k_obj][1], rostros=rostros)
 
 
 # El croquis del laboratorio (dibujo a mano, rojo = cajas): rectangulos en px del dibujo. El dibujo no esta
@@ -373,7 +447,7 @@ _CROQUIS_PX = [(60, 450, 290, 515), (370, 480, 470, 775), (540, 285, 625, 490), 
                (1145, 435, 1215, 800)]
 
 
-def croquis(W=4.0, H=4.0, semilla=0, persona=None):
+def croquis(W=4.0, H=4.0, semilla=0, persona=None, n_rostros=1, sep=None):
     """El circuito del croquis estirado a W x H m. A abajo a la izquierda mirando a la derecha (el circulo
     del dibujo); la foto de B en la pared derecha, abajo (supuesto: el dibujo no marca B)."""
     rng = np.random.default_rng(semilla)
@@ -387,16 +461,18 @@ def croquis(W=4.0, H=4.0, semilla=0, persona=None):
         cajas.append(((ax + bx) / 2, (ay + by) / 2, bx - ax, by - ay, float(rng.uniform(0.3, 0.5))))
     ix, iy = m(110, 615)
     inicio = (max(ix, 0.35), iy, 0.0)
-    return _sala_con_cajas(W, H, cajas, inicio, 0.25 * H, rng, persona, f"croquis:{W:g}:{H:g}", semilla)
+    return _sala_con_cajas(W, H, cajas, inicio, 0.25 * H, rng, persona, f"croquis:{W:g}:{H:g}", semilla,
+                           n_rostros=n_rostros, sep=sep)
 
 
-def sala_densa(semilla, W=4.0, H=4.0, persona=None):
+def sala_densa(semilla, W=4.0, H=4.0, persona=None, n_rostros=1, sep=None):
     """Sala de W x H m con 7 a 11 cajas al azar (algunas largas como tabiques, algunas pegadas a la pared),
     A a la izquierda y B en la pared derecha. Pasos angostos (>= ~0.48 m) y caminos que no se ven desde A."""
     rng = np.random.default_rng(semilla)
     inicio = (0.4, float(rng.uniform(0.6, H - 0.6)), 0.0)
     y_b = float(rng.uniform(0.5, H - 0.5))
     cajas, n_cajas = [], int(rng.integers(7, 12))
+    metas_y = [y_b] if n_rostros <= 1 else [y_b + (i - (n_rostros - 1) / 2) * 0.48 for i in range(n_rostros)]
     for _ in range(200):
         if len(cajas) >= n_cajas:
             break
@@ -409,13 +485,27 @@ def sala_densa(semilla, W=4.0, H=4.0, persona=None):
         cx, cy = float(rng.uniform(0.9, W - 0.3)), float(rng.uniform(0.2, H - 0.2))
         if rng.random() < 0.25:                                             # pegada a una pared
             cy = h / 2 if rng.random() < 0.5 else H - h / 2
-        if math.hypot(cx - inicio[0], cy - inicio[1]) < 0.75 or math.hypot(cx - (W - 0.3), cy - y_b) < 0.6:
+        cerca_meta = min(math.hypot(cx - (W - 0.3), cy - y) for y in metas_y)
+        if math.hypot(cx - inicio[0], cy - inicio[1]) < 0.75 or cerca_meta < 0.6:
             continue
         cajas.append((cx, cy, w, h, float(rng.uniform(0.25, 0.5))))
-    return _sala_con_cajas(W, H, cajas, inicio, y_b, rng, persona, f"denso:{semilla}", semilla)
+    return _sala_con_cajas(W, H, cajas, inicio, y_b, rng, persona, f"denso:{semilla}", semilla, n_rostros=n_rostros,
+                           sep=sep)
 
 
 def construir(nombre, persona=None):
+    """Mundos: demo | demo-sin-flechas | sala[:N] | aleatorio:N[:sin] | croquis[:W:H] | denso:N[:W:H].
+    Con "+K" al final (solo croquis y denso), la meta tiene K fotos con QR: p. ej. croquis+6, denso:3+6.
+    "+K:S" fija la separacion entre fotos en S m (defecto 0.40-0.55 al azar): denso:3+6:0.3 = mas juntas."""
+    n_rostros, sep = 1, None
+    if "+" in nombre:
+        nombre, k = nombre.split("+", 1)
+        if ":" in k:
+            k, sep = k.split(":", 1)
+            sep = float(sep)
+        n_rostros = int(k)
+        if not (nombre.startswith("croquis") or nombre.startswith("denso")):
+            raise ValueError(f"'+{k}' (varias fotos con QR) solo existe para croquis y denso, no para {nombre}")
     partes = nombre.split(":")
     if partes[0] == "demo":
         return circuito_aleatorio(7, flechas=True, persona=persona, tramos=3, ramas=1, obstaculos=3)
@@ -429,11 +519,12 @@ def construir(nombre, persona=None):
     if partes[0] == "croquis":                                   # croquis[:W:H]
         W = float(partes[1]) if len(partes) > 1 else 4.0
         H = float(partes[2]) if len(partes) > 2 else W
-        return croquis(W, H, persona=persona)
+        return croquis(W, H, persona=persona, n_rostros=n_rostros, sep=sep)
     if partes[0] == "denso":                                     # denso:N[:W:H]
         semilla = int(partes[1]) if len(partes) > 1 else 0
         W = float(partes[2]) if len(partes) > 2 else 4.0
         H = float(partes[3]) if len(partes) > 3 else W
-        return sala_densa(semilla, W, H, persona)
+        return sala_densa(semilla, W, H, persona, n_rostros=n_rostros, sep=sep)
     raise ValueError(f"mundo desconocido: {nombre} "
-                     "(demo | demo-sin-flechas | sala | aleatorio:N[:sin] | croquis[:W:H] | denso:N[:W:H])")
+                     "(demo | demo-sin-flechas | sala | aleatorio:N[:sin] | croquis[:W:H] | denso:N[:W:H], "
+                     "y +K al final de croquis/denso para K fotos con QR)")

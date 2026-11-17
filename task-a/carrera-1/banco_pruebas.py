@@ -9,6 +9,7 @@ generaliza a circuitos que no conoce, con y sin flechas.
   python task-a/carrera-1/banco_pruebas.py --json resultados.json  # ademas guarda cada corrida
   python task-a/carrera-1/banco_pruebas.py --videos videos/        # VIDEO de cada corrida que falla o choca
   python task-a/carrera-1/banco_pruebas.py --videos videos/ --videos-todos   # ...o de todas
+  python task-a/carrera-1/banco_pruebas.py --mundos croquis+6 denso:1+6 denso:2+6     # 6 fotos con QR en la meta
   python task-a/carrera-1/banco_pruebas.py --mundos croquis denso:1 denso:2 denso:3 --duro
                                                                    # dificil: odometria con sesgo, camara lenta
 
@@ -71,6 +72,13 @@ def resumen(rs, titulo):
     print(f"   choques: {sum(r.get('choques') or 0 for r in rs)} en total, "
           f"{sum(1 for r in rs if (r.get('choques') or 0) > 0)} corridas con choque")
     print(f"   nombre equivocado: {len(mal)}" + "".join(f"  [{r['mundo']}: {r['persona']} -> {r['nombre']}]" for r in mal))
+    con_qr = [r for r in rs if "qr_ok" in r]
+    if con_qr:
+        qr_mal = [r for r in con_qr if r.get("palabra") and not r.get("qr_ok")]
+        sin = [r for r in con_qr if r.get("estado") == "HECHO" and not r.get("palabra")]
+        print(f"   QR: {sum(1 for r in con_qr if r.get('qr_ok'))}/{len(con_qr)} bien, {len(qr_mal)} con la palabra "
+              f"EQUIVOCADA, {len(sin)} volvieron sin leerlo"
+              + "".join(f"  [{r['mundo']}: '{r.get('palabra')}']" for r in qr_mal))
     for r in rs:
         if not r.get("exito"):
             ult = r.get("log")[-1] if r.get("log") else r.get("error", "")

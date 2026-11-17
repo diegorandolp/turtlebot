@@ -11,6 +11,11 @@ Uso (desde la raiz del repositorio, con el entorno virtual activado):
 
   python task-a/carrera-1/carrera.py --sim --mundo croquis --go --video   # + video del recorrido (MP4)
 
+Reglas del laboratorio: en la meta hay varias fotos (~6), cada una con un QR en una esquina de abajo. Se
+le dice al robot a quien buscar; lee el QR de esa foto, vuelve a A y dice la palabra:
+  python task-a/carrera-1/carrera.py --undock --buscar "Nombre Apellido"          # ROBOT REAL
+  python task-a/carrera-1/carrera.py --sim --mundo croquis+6 --go --video          # simulador: 6 fotos con QR
+
 Teclas (ventana enfocada): g empezar/reanudar · espacio PAUSA (parada inmediata) · q / Esc salir
 Cada corrida queda en task-a/carrera-1/corridas/ (que paso y cuando, para el informe). Con --video
 tambien el video del recorrido en corridas/videos/ (camara, mapa, vista real y estado), con el robot
@@ -35,7 +40,7 @@ for p in (HERE, HERE.parent / "auto-1", HERE.parent / "slam-1", ROOT):
 from coverage import Coverage                                               # noqa: E402  (auto-1)
 from explorer import Explorer                                               # noqa: E402  (auto-1)
 from flechas import DetectorFlechas                                         # noqa: E402
-from navegador import (ACERCAR, EXPLORAR, HECHO, IDA, PAUSA, RECONOCER, VOLVER,   # noqa: E402
+from navegador import (ACERCAR, EXPLORAR, HECHO, IDA, LEER_QR, PAUSA, RECONOCER, VOLVER,   # noqa: E402
                        Carrera, Config)
 from percepcion import CamaraHilo, Objetivo, Percepcion, Senales           # noqa: E402
 from planner import Planner                                                 # noqa: E402  (auto-1)
@@ -48,7 +53,7 @@ from video import Grabador, ruta_auto                                       # no
 
 MAP_M, MAP_PX = 20.0, 500
 COLORES = {PAUSA: (0, 200, 255), IDA: (0, 255, 0), ACERCAR: (255, 0, 255), RECONOCER: (255, 0, 255),
-           VOLVER: (255, 200, 0), HECHO: (0, 255, 0), EXPLORAR: (0, 200, 255)}
+           VOLVER: (255, 200, 0), HECHO: (0, 255, 0), EXPLORAR: (0, 200, 255), LEER_QR: (255, 255, 0)}
 
 
 def ascii(s):
@@ -68,17 +73,36 @@ def componer(base, ref, ahora):
             math.atan2(math.sin(th), math.cos(th)))
 
 
+def _plano(texto):
+    t = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode()
+    return " ".join(t.replace("_", " ").lower().split())
+
+
+def nombre_en_galeria(nombre, nombres):
+    """El nombre tal como esta en la galeria ('alvaro garcia' -> 'Alvaro García'); sin mayusculas, tildes ni
+    guiones bajos. Si no esta (o es ambiguo), SystemExit con la lista: mejor saberlo antes de arrancar."""
+    exactos = [n for n in nombres if _plano(n) == _plano(nombre)]
+    if len(exactos) == 1:
+        return exactos[0]
+    parecidos = [n for n in nombres if _plano(nombre) in _plano(n)]
+    if len(parecidos) == 1:
+        return parecidos[0]
+    raise SystemExit(f"[error] --buscar '{nombre}' no esta (o es ambiguo) en la galeria. Nombres:\n  "
+                     + "\n  ".join(sorted(set(nombres))))
+
+
 def armar(args, excluir=()):
     rec = Reconocedor(args.modelo, excluir=excluir)
-    per = Percepcion(rec, DetectorFlechas(color=args.flechas_color), hfov=args.hfov_hd if args.hd else args.hfov)
+    per = Percepcion(rec, DetectorFlechas(color=args.flechas_color), hfov=args.hfov, hfov_hd=args.hfov_hd)
     engine = make_engine(args.engine, size_m=MAP_M, pixels=MAP_PX)
     pl = Planner(MAP_M, MAP_PX, cell=2, robot_radius=0.17, margin=0.05)
     frontal = args.mirada_desde is not None or not args.cobertura_simple
     cov = CoberturaFrontal(pl, fov_deg=args.hfov, rng=1.5) if frontal else Coverage(pl, fov_deg=args.hfov, rng=1.5)
     exp = Explorer(pl, cov=cov, vmax=min(args.vel, 0.22))
     vot = Votacion(rec.nombres)
+    buscar = nombre_en_galeria(args.buscar, rec.nombres) if args.buscar else ""
     cfg = Config(vmax=args.vel, vmax_vuelta=min(0.31, args.vel + 0.02), temprano=args.temprano,
-                 usar_flechas=not args.sin_flechas)
+                 usar_flechas=not args.sin_flechas, buscar=buscar, leer_qr=not args.sin_qr)
     pl_fino = Planner(MAP_M, MAP_PX, cell=2, robot_radius=0.10, margin=0.0)
     nav = Carrera(cfg, pl, vot, Objetivo(vot), Senales(), exp, planner_fino=pl_fino)
     if args.mirada_desde is not None:
@@ -93,7 +117,8 @@ def panel_camara(ultima, nav, lado=400):
         img = np.zeros((lado, lado, 3), np.uint8)
         cv2.putText(img, "sin imagen", (20, lado // 2), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
         return img
-    img, caras, flechas = ultima
+    img, caras, flechas = ultima[:3]
+    qrs = ultima[3] if len(ultima) > 3 else []
     s = lado / img.shape[1]
     out = cv2.resize(img, (lado, int(img.shape[0] * s)), interpolation=cv2.INTER_NEAREST)
     for o in flechas:
@@ -107,6 +132,11 @@ def panel_camara(ultima, nav, lado=400):
         if o.res is not None:
             txt = f"{ascii(o.res.nombre)} {o.res.sim:.2f}"
         cv2.putText(out, txt, (x, max(12, y - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1, cv2.LINE_AA)
+    for o in qrs:
+        x, y, w, h = (int(v * s) for v in o.caja)
+        cv2.rectangle(out, (x, y), (x + w, y + h), (255, 255, 0), 2)
+        cv2.putText(out, o.texto[:24], (x, min(out.shape[0] - 4, y + h + 14)), cv2.FONT_HERSHEY_SIMPLEX, 0.42,
+                    (255, 255, 0), 1, cv2.LINE_AA)
     if nav.vot is not None and nav.vot.n:
         for i, (n, p) in enumerate(nav.vot.top(3)):
             cv2.rectangle(out, (6, out.shape[0] - 60 + 18 * i), (6 + int(150 * p), out.shape[0] - 46 + 18 * i), (255, 0, 255), -1)
@@ -143,6 +173,13 @@ def panel_mapa(engine, nav, pos, lado=400, radio_m=5.0):
             cv2.circle(img, px(*sg.xy), 6, col, 2)
             cv2.putText(img, sg.dir(), (px(*sg.xy)[0] + 7, px(*sg.xy)[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.4, col, 1)
     cv2.drawMarker(img, px(*nav.home), (0, 160, 0), cv2.MARKER_DIAMOND, 14, 2)
+    for c in nav.candidatas:                       # con --buscar: cada foto vista (verde = la buscada, gris = otra)
+        if c.xy is None:
+            continue
+        col = {"objetivo": (0, 200, 0), "otra": (150, 150, 150)}.get(c.estado, (0, 220, 255))
+        cv2.circle(img, px(*c.xy), 7, col, 2)
+        cv2.putText(img, f"#{c.id}" + (" QR" if c.id in nav.qr_de else ""), (px(*c.xy)[0] - 30, px(*c.xy)[1] - 9),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, col, 1)
     if nav.obj is not None and nav.obj.xy is not None:
         cv2.drawMarker(img, px(*nav.obj.xy), (255, 0, 255), cv2.MARKER_STAR, 16, 2)
     x, y, th = pos
@@ -170,17 +207,34 @@ def ventana(engine, nav, pos, ultima, robot, sim, t_rel, camtxt):
                      for p in paneles])
     bar = np.full((70, top.shape[1], 3), 30, np.uint8)
     est = f"{nav.estado}  t={t_rel:5.1f}s"
+    if nav.cfg.buscar and not nav.nombre:
+        est += f"   BUSCO: {ascii(nav.cfg.buscar)}"
     if nav.nombre:
         est += f"   PERSONA: {ascii(nav.nombre)} ({nav.prob:.2f})"
+    if nav.palabra:
+        est += f"   QR: {ascii(nav.palabra)}"
     cv2.putText(bar, est, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, COLORES.get(nav.estado, (255, 255, 255)), 2, cv2.LINE_AA)
     cv2.putText(bar, ascii(nav.log[-1]) if nav.log else "g = empezar, espacio = pausa, q = salir", (8, 46),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 220, 220), 1, cv2.LINE_AA)
     cv2.putText(bar, camtxt, (8, 64), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (160, 160, 160), 1, cv2.LINE_AA)
     out = np.vstack([top, bar])
-    if nav.estado == HECHO and nav.nombre:
-        cv2.rectangle(out, (0, 0), (400, 56), (0, 120, 0), -1)
-        cv2.putText(out, ascii(nav.nombre).upper(), (10, 40), cv2.FONT_HERSHEY_DUPLEX, 1.1, (255, 255, 255), 2, cv2.LINE_AA)
+    final = anuncio(nav)
+    if nav.estado == HECHO and final:
+        txt = ascii(nav.palabra or nav.nombre).upper()
+        ancho = max(400, 22 * len(txt) + 20)
+        cv2.rectangle(out, (0, 0), (min(ancho, out.shape[1]), 56), (0, 120, 0), -1)
+        cv2.putText(out, txt, (10, 40), cv2.FONT_HERSHEY_DUPLEX, 1.1 if len(txt) < 18 else 0.8, (255, 255, 255), 2,
+                    cv2.LINE_AA)
     return out
+
+
+def anuncio(nav):
+    """Lo que se dice al llegar a A: la palabra del QR (reglas del laboratorio) o, sin QR, el nombre."""
+    if nav.palabra:
+        return f"La palabra es {nav.palabra}"
+    if nav.nombre:
+        return f"La persona es {nav.nombre}"
+    return ""
 
 
 def cuadro_video(vista, robot, sim, v, w, choques_previos=0):
@@ -208,7 +262,11 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
     """Una corrida completa. `robot` = TB4Client o SimRobot. Devuelve un resumen (dict)."""
     if args.cam_periodo is None:
         args.cam_periodo = 0.3 if args.hd else 0.15                  # renderizar HD cuesta mas
-    excluir = (mundo.foto_b,) if (sim and mundo is not None and mundo.foto_b) else ()
+    excluir = ()
+    if sim and mundo is not None:
+        excluir = tuple(mundo.fotos_excluir) or ((mundo.foto_b,) if mundo.foto_b else ())
+        if mundo.rostros and not args.buscar:
+            args.buscar = mundo.persona                                  # simulador: buscar a la del mundo
     rec, per, engine, nav, cov = armar(args, excluir)
     if args.traza:
         nav.traza = []                                                   # (t, estado, x, y, yaw, h_pref, phi, v, w)
@@ -223,12 +281,12 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
     anunciado, t_hecho = False, None
     t0 = reloj()
     vista = None
-    rec, v, w, pos = None, 0.0, 0.0, (0.0, 0.0, 0.0)
+    grab, v, w, pos = None, 0.0, 0.0, (0.0, 0.0, 0.0)
     if getattr(args, "video", None):
         destino = args.video
         if destino == "auto":
             destino = ruta_auto(HERE / "corridas" / "videos", (mundo.nombre if (sim and mundo) else "robot"))
-        rec = Grabador(destino, fps=args.video_fps, bloquear=sim, h264=not args.video_sin_h264)
+        grab = Grabador(destino, fps=args.video_fps, bloquear=sim, h264=not args.video_sin_h264)
     if args.go:
         nav.empezar(t0, 0.0)
     try:
@@ -265,26 +323,31 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
             sens.update(pos=pos, th_scan=pos_scan[2], w=pose.w if pose is not None else 0.0)
             # ---- camara ----
             buscar = nav.estado not in (PAUSA, VOLVER, HECHO)
+            leer_qr = nav.quiere_qr                                      # frente a la meta: buscar QR (y en HD)
             if sim:
                 if buscar and now >= t_cam:
-                    img = robot.photo(hd=args.hd)
-                    caras, flechas = per.procesar(img, pos, scan, now, sens["w"], pos_scan[2])
-                    pendientes.append((now + args.cam_latencia, now, img, caras, flechas))
-                    t_cam = now + args.cam_periodo
+                    hd = args.hd or (leer_qr and not args.qr_sin_hd)
+                    img = robot.photo(hd=hd)
+                    caras, flechas, qrs = per.procesar(img, pos, scan, now, sens["w"], pos_scan[2], leer_qr=leer_qr)
+                    pendientes.append((now + args.cam_latencia, now, img, caras, flechas, qrs))
+                    t_cam = now + (max(args.cam_periodo, 0.3) if hd else args.cam_periodo)
                 listos = [p[1:] for p in pendientes if p[0] <= now]
                 pendientes = [p for p in pendientes if p[0] > now]
                 cam_ok = robot.camara_ok
             else:
                 cam.activa = buscar
+                cam.qr, cam.hd_qr = leer_qr, not args.qr_sin_hd
                 listos = cam.recoger()
                 cam_ok = cam.t_ok is not None and now - cam.t_ok < 6.0
-            for t_foto, img, caras, flechas in listos:
+            for t_foto, img, caras, flechas, qrs in listos:
                 fotos += 1
-                ultima = (img, caras, flechas)
+                ultima = (img, caras, flechas, qrs)
                 for o in caras:
                     nav.ver_cara(now, o, peso_por_tamano(o.px))
                 for o in flechas:
                     nav.ver_flecha(now, o)
+                for o in qrs:
+                    nav.ver_qr(now, o)
                 if nav.estado in (IDA, EXPLORAR) and scan is not None:
                     if isinstance(cov, CoberturaFrontal):
                         # lo que la camara mira DE FRENTE durante la ida y el plan B: asi el plan B sabe que
@@ -300,19 +363,19 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
                 robot.advance(dt)
             if nav.estado == HECHO and not anunciado:
                 anunciado, t_hecho = True, now
-                if args.mudo:
-                    print(f"\n==== La persona es {nav.nombre} ====\n", flush=True)
-                else:
-                    anunciar(f"La persona es {nav.nombre}")
+                texto = anuncio(nav)
+                print(f"\n==== {texto} ====\n", flush=True)
+                if not args.mudo:
+                    anunciar(texto)
             # ---- ventana (y video) ----
-            grabar = rec is not None and rec.toca(now)
+            grabar = grab is not None and grab.toca(now)
             if gui or grabar or (args.png and nav.estado == HECHO):
                 camtxt = (f"fotos {fotos}" + ("" if sim else f", errores {cam.errores} {cam.ultimo_error}")
                           + f"  | flechas vistas {len(nav.sen.lista)}  | sitios {nav.vis.n()}")
                 t_rel = now - (nav.t_inicio if nav.t_inicio is not None else now)
                 vista = ventana(engine, nav, pos, ultima, robot, sim, t_rel, camtxt)
             if grabar:
-                rec.agregar(cuadro_video(vista, robot, sim, v, w), now)
+                grab.agregar(cuadro_video(vista, robot, sim, v, w), now)
             if gui:
                 cv2.imshow("carrera-1 (Tarea A)", vista)
                 k = cv2.waitKey(1 if sim else 20) & 0xFF
@@ -344,22 +407,23 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
                 vista = ventana(engine, nav, engine.position(), ultima, robot, sim, 0.0, camtxt)
             cv2.imwrite(str(args.png), vista)
         ruta_video = None
-        if rec is not None:
+        if grab is not None:
             try:
                 if nav.estado == HECHO or vista is None:                       # el final con el nombre en grande
                     t_rel = (nav.t_fin or reloj()) - (nav.t_inicio or t0)
                     vista = ventana(engine, nav, pos, ultima, robot, sim, t_rel, f"fotos {fotos}")
-                rec.agregar(cuadro_video(vista, robot, sim, 0.0, 0.0), reloj())
-                rec.sostener(2.0)
-                ruta_video = rec.cerrar()
+                grab.agregar(cuadro_video(vista, robot, sim, 0.0, 0.0), reloj())
+                grab.sostener(2.0)
+                ruta_video = grab.cerrar()
             except Exception as e:                                             # el video nunca tumba la corrida
                 print(f"[video] {type(e).__name__}: {e}", file=sys.stderr)
     t_ini = nav.t_inicio if nav.t_inicio is not None else t0
-    res = dict(estado=nav.estado, nombre=nav.nombre, prob=round(nav.prob, 3),
+    res = dict(estado=nav.estado, nombre=nav.nombre, prob=round(nav.prob, 3), buscar=nav.cfg.buscar or None,
+               palabra=nav.palabra, qrs_leidos=len(nav.qr_de), fotos_meta=len(nav.candidatas),
                tiempo=round((nav.t_fin or reloj()) - t_ini, 2),
                tiempo_b=round(nav.t_b - t_ini, 2) if nav.t_b else None, fotos=fotos,
                flechas=[(s.dir(), s.n, s.usada) for s in nav.sen.lista], log=nav.log)
-    if rec is not None:
+    if grab is not None:
         res["video"] = str(ruta_video) if ruta_video else None
     if nav.traza is not None:
         res["traza"] = [[c if (c is None or isinstance(c, str)) else round(float(c), 3) for c in fila]
@@ -371,7 +435,9 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
         res.update(mundo=mundo.nombre if mundo else "", persona=mundo.persona if mundo else "",
                    acierto=(nav.nombre == mundo.persona) if mundo else None, choques=robot.collisions,
                    en_a=math.hypot(x - mundo.inicio[0], y - mundo.inicio[1]) < 0.35 if mundo else None)
-        res["exito"] = bool(res["estado"] == HECHO and res["acierto"] and res["en_a"])
+        if mundo is not None and mundo.qr:
+            res["qr_ok"] = nav.palabra == mundo.qr                       # reglas del laboratorio: la palabra del QR
+        res["exito"] = bool(res["estado"] == HECHO and res["acierto"] and res["en_a"] and res.get("qr_ok", True))
     return res
 
 
@@ -384,9 +450,18 @@ def guardar(res, carpeta=HERE / "corridas"):
 
 def parse(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("ip", nargs="?", default="192.168.0.103")
+    ap.add_argument("ip", nargs="?", default="192.168.0.104",
+                    help="IP del robot (defecto 192.168.0.104; 127.0.0.1 si corre EN el robot)")
     ap.add_argument("--sim", action="store_true", help="simulador en vez del robot real")
-    ap.add_argument("--mundo", default="demo", help="(--sim) demo | demo-sin-flechas | sala | aleatorio:N[:sin]")
+    ap.add_argument("--mundo", default="demo",
+                    help="(--sim) demo | demo-sin-flechas | sala | aleatorio:N[:sin] | croquis[:W:H] | denso:N[:W:H]; "
+                         "+K al final de croquis/denso: K fotos con QR en la meta (p. ej. croquis+6)")
+    ap.add_argument("--buscar", default=None, metavar="NOMBRE",
+                    help="persona a buscar entre las fotos de la meta (como en datos/rostros, sin importar tildes); "
+                         "lee el QR de su foto y anuncia la palabra. En el simulador con +K: la del mundo")
+    ap.add_argument("--sin-qr", action="store_true", help="con --buscar: no leer el QR (anuncia el nombre)")
+    ap.add_argument("--qr-sin-hd", action="store_true",
+                    help="no pedir fotos HD para leer el QR (con HD se lee desde ~1.4 m; sin HD, desde ~0.5 m)")
     ap.add_argument("--persona", default=None, help="(--sim) quien esta en la foto de B (defecto: al azar)")
     ap.add_argument("--no-gui", action="store_true", help="sin ventana (con el robot real solo se para con Ctrl+C)")
     ap.add_argument("--go", action="store_true", help="empezar sin esperar la tecla g")
@@ -430,8 +505,9 @@ def crear_sim(args):
     from mundos import construir
     from simulador import SimRobot
     mundo = construir(args.mundo, args.persona)
+    hd = args.hd or bool(mundo.qr and not args.qr_sin_hd)                # con QR: la camara HD existe
     robot = SimRobot(mundo, hfov=args.hfov, camara_ok=not args.camara_caida,
-                     foto_hd=(1280, 720, args.hfov_hd) if args.hd else None,
+                     foto_hd=(1280, 720, args.hfov_hd) if hd else None,
                      odom_ruido=args.odom_ruido, odom_sesgo=args.odom_sesgo)
     return mundo, robot
 
@@ -441,7 +517,11 @@ def main(argv=None):
     args.vel = min(args.vel, 0.31)
     if args.sim:
         mundo, robot = crear_sim(args)
-        print(f"[sim] mundo {mundo.nombre}: en B esta {mundo.persona} ({mundo.foto_b}, excluida de la galeria)")
+        if mundo.rostros:
+            print(f"[sim] mundo {mundo.nombre}: {len(mundo.rostros)} fotos con QR en la meta; la buscada es "
+                  f"{mundo.persona} (QR '{mundo.qr}'); las fotos de la meta no estan en la galeria")
+        else:
+            print(f"[sim] mundo {mundo.nombre}: en B esta {mundo.persona} ({mundo.foto_b}, excluida de la galeria)")
         res = correr(robot, args, sim=True, gui=not args.no_gui, mundo=mundo, max_t=args.max_t)
     else:
         from tb4 import TB4Client

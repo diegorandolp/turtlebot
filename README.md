@@ -4,10 +4,23 @@
 el robot va del punto A al punto B esquivando obstáculos, reconoce a la persona de una foto en B y
 vuelve a A anunciando su nombre.
 
+**Reglas del laboratorio (las que valen para la competencia):** el circuito es una sala de ~4×4 m con
+cajas y señales en las paredes (que se pueden usar o no; pueden ser de color: importa la forma). En la
+meta hay **varias fotos (~6)**, cada una con un **QR en una esquina de abajo**. Le decimos al robot a quién
+buscar; lee el QR de esa foto, vuelve a A y **dice la palabra del QR**. Límite: **3 min por carrera**.
+Choques y respuestas equivocadas tienen penalidad.
+
 | Tarea | Navegación | Reconocimiento |
 |---|---|---|
-| **A** (autónoma) | LiDAR + odometría, sin intervención humana | Cámara del robot en el punto B |
+| **A** (autónoma) | LiDAR + odometría, sin intervención humana | Cámara del robot: busca a la persona entre las fotos de la meta y lee su QR |
 | **B** (gestos) | Gestos de una persona captados por la webcam de la PC (sin teclado, ratón ni mando) | Igual que en A |
+
+### Estado (16/11)
+
+| | Hecho | Falta |
+|---|---|---|
+| **Tarea A** ([carrera-1](task-a/carrera-1/README.md)) | Navegación rápida sin choques en salas con cajas, flechas, varias fotos + QR (`--buscar`), volver exacto a A, video del recorrido. En simulación: 20/20 con 6 fotos y QR, 0 choques, 0 palabras equivocadas | **Probar con el robot real** (guía en el README de carrera-1); medir CPU si se quiere correr en la Raspberry |
+| **Tarea B** ([gestos-1](task-b/gestos-1/README.md)) | Conducir con gestos de la mano (webcam de la PC) | Reconocer a la persona, leer su QR y anunciarlo (se puede reutilizar `task-a/carrera-1/qr.py` y `reconocimiento/`) |
 
 Arquitectura: la PC habla con el robot por **UDP** (no necesita ROS). En el robot corre un puente
 que traduce a ROS 2 y aplica un **freno de emergencia por LiDAR**. Detalles en
@@ -18,7 +31,7 @@ que traduce a ROS 2 y aplica un **freno de emergencia por LiDAR**. Detalles en
 ```text
 turtlebot67/
 ├── task-a/            Tarea A (autónoma)
-│   ├── carrera-1/     ★ La solución de competencia: A → B → A rápido, flechas, reconocimiento, simulador
+│   ├── carrera-1/     ★ La solución de competencia: A → B → A rápido, flechas, varias fotos + QR, simulador, video
 │   ├── auto-1/        Exploración por fronteras y cobertura de cámara (plan B de carrera-1)
 │   ├── slam-1/        Mapa 2D en la PC (odometría o BreezySLAM)
 │   └── camara/        Lanzar la cámara solo en color (apaño USB) y con imagen HD
@@ -52,7 +65,9 @@ Tarea A ([task-a/carrera-1](task-a/carrera-1/README.md)):
 python3 task-a/carrera-1/carrera.py --sim                 # probar en el simulador (g = empezar)
 python3 task-a/carrera-1/banco_pruebas.py --n 20          # 40 carreras simuladas en circuitos aleatorios
 python3 task-a/carrera-1/probar_vision.py                 # con el robot: ver flechas, caras y nombres (sin moverlo)
-python3 task-a/carrera-1/carrera.py --undock              # COMPETENCIA: arranca en pausa, g = empezar
+python3 task-a/carrera-1/carrera.py --sim --mundo croquis+6 --go --video   # reglas del lab: 6 fotos con QR
+python3 task-a/carrera-1/probar_vision.py --qr --hd       # con el robot: ver QR y de que cara es cada uno
+python3 task-a/carrera-1/carrera.py --undock --buscar "Nombre Apellido"   # COMPETENCIA: arranca en pausa, g = empezar
 ```
 
 Antes de competir, seguir la guía [Preparar y probar en el laboratorio](task-a/carrera-1/README.md#preparar-y-probar-en-el-laboratorio)
@@ -64,6 +79,20 @@ Reconocimiento facial: [reconocimiento/README.md](reconocimiento/README.md). Tar
 Antes de nada: red, IP, reglas para usar el robot entre varios y problemas conocidos en
 **[docs/robot_grupo3.md](docs/robot_grupo3.md)**. Para instalar ROS 2 o reconfigurar el robot desde
 cero: [setup/README.md](setup/README.md).
+
+## Ramas
+
+`master` es la versión buena: todo lo de la Tarea A (carrera-1) y la Tarea B (gestos) está ahí. Se trabaja
+en una rama nueva desde `master` y se une con un pull request.
+
+| Rama | Qué tiene | Estado |
+|---|---|---|
+| `master` | Todo lo vigente | ★ usar esta |
+| `task-a/carrera` | carrera-1 de Diego | Igual a `master` (ya unida) |
+| `task-a/carrera-mejoras` | Mejoras de Alvaro (PR #1) | Ya unida a `master`: se puede borrar |
+| `task-a/qr-persona` | Varias fotos + QR, `probar_vision.py --qr` | Para unir a `master` |
+| `task-b/gestos` | Gestos de Sofía | Los gestos están en `master` desde el 9/11. Su último commit ("add: simulation") es de la Tarea A sobre una versión vieja de auto-1 y choca con `master`: se archiva con el tag `archivo/task-b-gestos` |
+| `manzana-zanabu` | laberinto-1 (Marcelino y Sofía): señales por color, QR, auto-1 con registro de caras | **No unir a `master` tal cual**: renombra `coverage.py` (rompe carrera-1), sube ~68 MB de resultados y modelos, y su README de `fast-set-up` tiene contraseñas (el repo es público). El lector de QR se pasó a carrera-1 (`qr.py`). Se archiva con el tag `archivo/manzana-zanabu` |
 
 ## Reglas rápidas
 

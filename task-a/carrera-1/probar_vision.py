@@ -2,12 +2,16 @@
 Prueba la vision de carrera-1 con la camara del robot (o la webcam / fotos del disco), SIN mover el
 robot: flechas (sentido y puntaje), caras y quien es cada una, y la votacion acumulada.
 
-  python task-a/carrera-1/probar_vision.py                    # robot 192.168.0.103, preview 250x250
+  python task-a/carrera-1/probar_vision.py                    # robot 192.168.0.104, preview 250x250
+  python task-a/carrera-1/probar_vision.py --qr --hd          # + los QR: que dice cada uno y de que cara es
   python task-a/carrera-1/probar_vision.py --hd               # fotos HD (camara con camara_rgb.sh --hd)
   python task-a/carrera-1/probar_vision.py --webcam 0         # la webcam de la PC (p. ej. con la foto en la mano)
   python task-a/carrera-1/probar_vision.py --fotos carpeta/   # imagenes del disco
 
-Teclas: s guarda la foto en fotos/<clase>/ (la clase se elige con 1 = izq, 2 = der, 3 = nada, 4 = cara;
+Con --qr dibuja cada QR (amarillo) con su texto y una linea a la cara a la que se le asigna (la de cuya
+esquina de abajo es); sin linea = no se pudo asegurar de que foto es (el robot no lo usaria).
+
+Teclas: s guarda la foto en fotos/<clase>/ (la clase se elige con 1 = izq, 2 = der, 3 = nada, 4 = cara, 5 = qr;
 asi se arma un set para evaluar_flechas.py) · r reinicia la votacion · q / Esc salir.
 Muestra tambien las fotos por segundo: con el robot real conviene >= 4 (si no, no usar --hd).
 """
@@ -24,9 +28,10 @@ sys.path.insert(0, str(HERE.parents[1]))
 
 from carrera import ascii                                            # noqa: E402
 from flechas import DetectorFlechas, dibujar                         # noqa: E402
+from qr import buscar_qrs                                            # noqa: E402
 from reconocimiento import Reconocedor, Votacion, peso_por_tamano   # noqa: E402
 
-CLASES = {ord("1"): "izq", ord("2"): "der", ord("3"): "nada", ord("4"): "cara"}
+CLASES = {ord("1"): "izq", ord("2"): "der", ord("3"): "nada", ord("4"): "cara", ord("5"): "qr"}
 
 
 def fuente(a):
@@ -57,8 +62,9 @@ def fuente(a):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("ip", nargs="?", default="192.168.0.103")
+    ap.add_argument("ip", nargs="?", default="192.168.0.104")
     ap.add_argument("--hd", action="store_true")
+    ap.add_argument("--qr", action="store_true", help="leer tambien los QR y mostrar de que cara es cada uno")
     ap.add_argument("--undock", action="store_true", help="sacar el robot del dock primero (retrocede solo)")
     ap.add_argument("--webcam", type=int, default=None)
     ap.add_argument("--fotos", default=None)
@@ -86,6 +92,17 @@ def main():
             cv2.rectangle(out, (x, y), (x + w, y + h), (0, 255, 0), 2)
             cv2.putText(out, f"{ascii(r.nombre)} {r.sim:.2f} ({w}px)", (x, max(12, y - 4)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1, cv2.LINE_AA)
+        if a.qr:
+            for q in buscar_qrs(img, [r.cara.caja for r in caras]):
+                x, y, w, h = q.caja
+                cv2.rectangle(out, (x, y), (x + w, y + h), (0, 255, 255), 2)
+                de = ascii(caras[q.cara].nombre) if q.cara is not None else "?"
+                cv2.putText(out, f"{q.texto} [{de}]", (x, min(out.shape[0] - 6, y + h + 16)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2, cv2.LINE_AA)
+                if q.cara is not None:
+                    cx, cy, cw, ch = caras[q.cara].cara.caja
+                    cv2.line(out, (int(x + w / 2), int(y)), (int(cx + cw / 2), int(cy + ch)), (0, 255, 255), 1)
+                print(f"QR '{q.texto}' -> cara de {de}")
         if caras:
             vot.agregar(caras[0].sims, peso_por_tamano(caras[0].cara.ancho))
         s = 600 / max(out.shape[:2])

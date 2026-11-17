@@ -14,12 +14,19 @@ Estados:
              gana el mas votado, nunca "desconocido"; sin ningun voto no decide: se acerca mas)
   VOLVER     ruta mas corta a A sobre el mapa armado en la ida (Dijkstra de auto-1); si no hay o no
              avanza, Dijkstra con margen chico o el camino de ida acortado con rectas. A toda velocidad
-  HECHO      en A: parado; quien llama anuncia el nombre
+  LEER_QR    (con --buscar) frente a la foto de la persona buscada: quieto, girando un poco a cada lado,
+             acercandose y alejandose, hasta leer el QR de su esquina de abajo (o rendirse a los qr_max_s)
+  HECHO      en A: parado; quien llama anuncia la palabra del QR (o el nombre, si no hay QR)
   EXPLORAR   plan B si la IDA deja de descubrir sitios nuevos: exploracion por fronteras y cobertura de
              la camara (auto-1), mas lenta pero sistematica. Si ve la cara, pasa a ACERCAR
 
 El movimiento sale de una ventana dinamica: entre arcos (v, w) de 1.2 s se elige el que mas avanza hacia
 el rumbo deseado sin pasar a menos de 20 cm de nada. La seguridad final es del puente (freno a 0.28 m).
+
+Con `Config.buscar` (la meta tiene varias fotos, cada una con un QR): cada foto vista es una "candidata"
+con su propia votacion. Se va primero a la que mas probablemente es la buscada; una candidata que resulta
+ser otra persona se descarta y se pasa a la siguiente (o se sigue buscando). Los QR leidos se guardan con
+la foto a la que pertenecen: si el de la buscada ya se leyo al acercarse, no hace falta LEER_QR.
 """
 import math
 from dataclasses import dataclass
@@ -27,8 +34,8 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
-PAUSA, IDA, ACERCAR, RECONOCER, VOLVER, HECHO, EXPLORAR = (
-    "PAUSA", "IDA", "ACERCAR", "RECONOCER", "VOLVER", "HECHO", "EXPLORAR")
+PAUSA, IDA, ACERCAR, RECONOCER, VOLVER, HECHO, EXPLORAR, LEER_QR = (
+    "PAUSA", "IDA", "ACERCAR", "RECONOCER", "VOLVER", "HECHO", "EXPLORAR", "LEER_QR")
 BUSCANDO = (IDA, EXPLORAR)
 ANGS = np.radians(np.arange(-180, 180, 5.0))           # rumbos candidatos, marco del robot
 
@@ -60,6 +67,14 @@ class Config:
     t_limite_decidir: float = 140.0 # s de carrera desde los que se decide con lo que haya (no perder el intento)
     usar_flechas: bool = True
     celda: float = 0.30             # m: celdas del mapa de "ya estuve aqui"
+    # --- varias fotos en la meta (--buscar) ---
+    buscar: str = ""                # persona buscada, como en la galeria ("" = una sola foto en B: la de siempre)
+    leer_qr: bool = True            # con `buscar`: leer el QR de su foto y anunciar lo que dice
+    px_descartar: float = 20.0      # px: una candidata solo se descarta ("es otra") si se vio al menos asi de grande
+    d_candidata: float = 0.35       # m: dos caras a menos de esto en el mapa son la misma foto
+    d_qr: float = 0.40              # m: lo mas cerca que se acerca para leer el QR
+    margen_qr: float = 0.08         # el QR cuenta si su cara se reconoce como la buscada con esta ventaja (coseno)
+    qr_max_s: float = 30.0          # s maximos frente a la foto buscando el QR (despues vuelve igual)
 
 
 # arcos que prueba la ventana dinamica: 6 velocidades de 0 a vmax y 19 giros, mantenidos 1.2 s
@@ -211,6 +226,16 @@ class Carrera:
         self.libre_frente = self.libre_atras = 9.0   # m libres en el pasillo del robot (+-0.20 m)
         self._reversa = -1e9                  # hasta cuando retroceder (salir de un atasco de frente)
         self.mirada = None                    # mirada.MiradaLateral (mirar paredes de costado en la IDA); None = no
+        self._vot0 = votacion                 # plantilla de votacion (con --buscar cada candidata tiene la suya)
+        self.candidatas = []                  # con --buscar: una Objetivo por cada foto vista
+        self.palabra = None                   # lo que dice el QR de la persona buscada
+        self.qr_de = {}                       # id de candidata -> texto del QR leido junto a esa foto
+        self._qr_votos = {}                   # texto -> fotos que lo vieron junto a una cara reconocida como la buscada
+        self._qr_otros = {}                   # texto -> persona junto a la que se vio (otra que la buscada)
+        self._qr = None                       # fase de LEER_QR: dict(paso, t0, th0, t_ini)
+        self._mirar = []                      # rumbos (mapa) a los que girar en el sitio, en orden (barrido)
+        self._mapa = None                     # el ultimo mapa recibido (LEER_QR lo usa para ponerse de frente)
+        self._barridos = []                   # (x, y) donde ya se hizo un barrido (no repetir en el mismo lugar)
         self._now, self._fotos = 0.0, 0
 
     # ---------- control externo ----------
@@ -236,6 +261,8 @@ class Carrera:
     # ---------- percepcion ----------
     def ver_cara(self, now, o, peso):
         """Llamar con cada cara detectada. Devuelve True si se uso."""
+        if self.cfg.buscar:
+            return self._ver_cara_buscar(now, o, peso)
         if self.obj is None or self.estado in (PAUSA, VOLVER, HECHO):
             return False
         lejos = self.obj.xy is not None and np.linalg.norm(self.obj.xy - np.array(o.xy)) > 1.2
@@ -252,6 +279,272 @@ class Carrera:
             self.vista_b = np.array(self._pos[:2], float)       # desde aqui se ve la foto
             self._mejor_b, self.por_mapa = None, False
         return True
+
+    # ---------- varias fotos: candidatas, la buscada y su QR ----------
+    @property
+    def quiere_qr(self):
+        """La camara debe buscar QR (cuesta: solo cerca de la meta)."""
+        return bool(self.cfg.buscar and self.cfg.leer_qr and self.palabra is None
+                    and self.estado in (ACERCAR, RECONOCER, LEER_QR))
+
+    def _p_buscada(self, c):
+        """Probabilidad (votacion de la candidata) de que sea la persona buscada."""
+        if c.vot.n == 0:
+            return 1.0 / max(len(c.vot.nombres), 1)
+        p = c.vot.probabilidades()
+        return float(p[c.vot.nombres.index(self.cfg.buscar)])
+
+    def _candidata(self, xy, radio=None):
+        """La candidata mas cercana a xy (a menos de `radio`), o None."""
+        radio = self.cfg.d_candidata if radio is None else radio
+        mejor, d_mejor = None, radio
+        for c in self.candidatas:
+            if c.xy is None:
+                continue
+            d = float(np.hypot(c.xy[0] - xy[0], c.xy[1] - xy[1]))
+            if d < d_mejor:
+                mejor, d_mejor = c, d
+        return mejor
+
+    def _candidata_para(self, o):
+        """La candidata (foto) a la que pertenece la cara `o`: la mas cercana a menos de d_candidata, salvo que
+        esa foto ya sea claramente de OTRA persona que la que esta cara muestra con claridad (fotos vecinas
+        casi pegadas, o el odometro corrido, las juntarian). None = es una foto nueva."""
+        r = o.res
+        clara = r is not None and o.px >= self.cfg.px_descartar and r.margen >= self.cfg.margen_qr
+        cerca = []
+        for c in self.candidatas:
+            if c.xy is not None:
+                d = float(np.hypot(c.xy[0] - o.xy[0], c.xy[1] - o.xy[1]))
+                if d < self.cfg.d_candidata:
+                    cerca.append((d, c))
+        for d, c in sorted(cerca, key=lambda t: t[0]):
+            if clara and c.vot.n >= 3:
+                nombre, p = c.vot.lider()
+                if p >= 0.9 and nombre != r.nombre:
+                    continue                                    # esa foto es de otra persona: no mezclar
+            return c
+        return None
+
+    def _clasificar(self, c):
+        """pendiente | objetivo (es la buscada) | otra. Se recalcula con cada foto: puede cambiar."""
+        v = c.vot
+        if v.n < v.min_fotos or v.peso < 1.0:
+            c.estado = "pendiente"
+            return
+        nombre, p = v.lider()
+        if nombre == self.cfg.buscar and p >= v.prob_min:
+            c.estado = "objetivo"
+        elif c.ancho_max >= self.cfg.px_descartar and (
+                (nombre != self.cfg.buscar and p >= v.prob_min) or (v.n >= 4 and self._p_buscada(c) < 0.01)):
+            c.estado = "otra"                                   # solo de cerca: de lejos podria ser la buscada
+        else:
+            c.estado = "pendiente"
+
+    def _ver_cara_buscar(self, now, o, peso):
+        if self.estado in (PAUSA, VOLVER, HECHO):
+            return False
+        c = self._candidata_para(o)
+        if c is None:
+            v0 = self._vot0
+            c = type(self.obj)(type(v0)(v0.nombres, temperatura=v0.T, min_fotos=v0.min_fotos,
+                                        max_fotos=v0.max_fotos, prob=v0.prob_min))
+            c.id = len(self.candidatas) + 1
+            self.candidatas.append(c)
+        antes = c.estado
+        c.agregar(o, peso, self._pos)
+        self._clasificar(c)
+        if c.estado != antes and c.estado != "pendiente":
+            nombre, p = c.vot.lider()
+            self.nota(now, f"foto #{c.id}: {'ES ' + self.cfg.buscar if c.estado == 'objetivo' else 'es ' + nombre} "
+                           f"(p={p:.2f}, {c.vot.n} fotos, {c.ancho_max:.0f} px)")
+        self._elegir_candidata(now)
+        return True
+
+    def _elegir_candidata(self, now):
+        """Elige a que foto ir: la buscada si ya se sabe cual es; si no, la pendiente que mas se le parece."""
+        if self.estado in (PAUSA, VOLVER, HECHO):
+            return
+        actual = self.obj if self.obj in self.candidatas else None
+        objs = [c for c in self.candidatas if c.estado == "objetivo"]
+        # una candidata que no se encontro donde se la vio se deja de lado un rato (salvo que se la vuelva a ver)
+        pend = [c for c in self.candidatas if c.estado == "pendiente" and c.n >= 2
+                and (now > c.t_ignorar or c.visto_hace(now) < 1.0)]
+        if objs:
+            mejor = max(objs, key=self._p_buscada)
+        elif pend:
+            x, y = self._pos[:2]
+            mejor = max(pend, key=lambda c: self._p_buscada(c) - 0.05 * float(np.hypot(c.xy[0] - x, c.xy[1] - y)))
+            if actual in pend and actual is not mejor:
+                if self._p_buscada(mejor) < self._p_buscada(actual) + 0.3:
+                    mejor = actual                                 # no saltar de una a otra por poco
+        else:
+            mejor = None
+        if self.estado == LEER_QR and actual is not None and actual.estado != "otra":
+            return                                                 # leyendo el QR: no cambiar de foto
+        if mejor is None:
+            hay_otra = any(c.estado == "otra" for c in self.candidatas)
+            if hay_otra and (self.estado in BUSCANDO or (actual is not None and actual.estado == "otra")):
+                venia = self.estado not in BUSCANDO
+                if venia:
+                    self.estado = IDA
+                    self.t_nuevo = now
+                    self.h_pref = self._pos[2]
+                x, y, th = self._pos
+                if all(math.hypot(x - bx, y - by) > 0.6 for bx, by in self._barridos):
+                    # las fotos de la meta estan juntas (en fila): mirar 55 grados a cada lado antes de irse
+                    self._barridos.append((x, y))
+                    self._mirar = [wrap(th + math.radians(55)), wrap(th - math.radians(55)), th]
+                    self.nota(now, "no veo otra foto por revisar: miro a los costados")
+                elif venia:
+                    self.nota(now, "no queda ninguna foto por revisar: sigo buscando")
+            return
+        if mejor is not actual or self.estado in BUSCANDO:
+            if self.estado in BUSCANDO or mejor is not actual:
+                self.nota(now, f"voy a la foto #{mejor.id} (p de ser {self.cfg.buscar} = {self._p_buscada(mejor):.2f}): ACERCAR")
+            self.obj, self.vot = mejor, mejor.vot
+            self.estado = ACERCAR
+            self._mirar = []
+            if self.mirada is not None:
+                self.mirada.activa = None
+            self.vista_b = np.array(self._pos[:2], float)
+            self._mejor_b, self.por_mapa, self.px_extra = None, False, 1.0
+
+    def ver_qr(self, now, o):
+        """Llamar con cada QR leido (Obs tipo 'qr').
+
+        Un QR cuenta para la persona buscada solo si, EN LA MISMA FOTO, esta en la esquina de abajo de una
+        cara (qr._de_que_cara) que esa misma foto reconoce como la buscada (nombre + margen sobre la segunda
+        persona, cara de >= px_descartar). No se usa la posicion en el mapa: con el odometro corrido, fotos
+        vecinas se mezclan. Se acepta un texto cuando lo leyeron >= 2 fotos, con 2 de ventaja sobre cualquier
+        otro texto, y ninguna foto lo vio junto a OTRA persona. Si nunca se cumple, a los qr_max_s se vuelve
+        con el nombre: mejor eso que una palabra equivocada."""
+        if not self.cfg.buscar or self.palabra is not None or self.estado in (PAUSA, VOLVER, HECHO):
+            return
+        cara = o.cara
+        if cara is None or cara.res is None or cara.px < self.cfg.px_descartar:
+            return
+        c = self._candidata(cara.xy)
+        if c is not None and self.qr_de.get(c.id) != o.texto:
+            self.qr_de[c.id] = o.texto                              # (para dibujar: el QR de cada foto)
+        r = cara.res
+        if r.margen < self.cfg.margen_qr:
+            return                                                  # esa foto no deja claro de quien es la cara
+        if r.nombre == self.cfg.buscar:
+            if o.texto not in self._qr_votos:
+                self.nota(now, f"QR junto a {self.cfg.buscar}: '{o.texto}'")
+            self._qr_votos[o.texto] = self._qr_votos.get(o.texto, 0) + 1
+        else:
+            if o.texto not in self._qr_otros:
+                self.nota(now, f"QR junto a {r.nombre}: '{o.texto}' (no es la buscada)")
+            self._qr_otros[o.texto] = r.nombre
+        # los textos vistos junto a otra persona no compiten ni se aceptan
+        orden = sorted(((t, n) for t, n in self._qr_votos.items() if t not in self._qr_otros), key=lambda kv: -kv[1])
+        if not orden:
+            return
+        texto, n = orden[0]
+        n2 = orden[1][1] if len(orden) > 1 else 0
+        if n >= 2 and n - n2 >= 2:
+            for k in self.candidatas:                               # la foto activa: la buscada (para dibujar)
+                if k.estado == "objetivo" and self.obj is not k and self.estado != LEER_QR:
+                    self.obj, self.vot = k, k.vot
+            self._aceptar_qr(now, texto, f"leido {n} veces")
+
+    def _aceptar_qr(self, now, texto, como):
+        self.palabra = texto
+        self.nombre = self.cfg.buscar                       # el QR se acepto junto a caras reconocidas como ella
+        self.prob = max([self._p_buscada(c) for c in self.candidatas if c.estado == "objetivo"] or [self._p_buscada(self.obj)])
+        self.t_b = self.t_b or now
+        self.nota(now, f"QR de {self.cfg.buscar}: '{texto}' ({como}): VOLVER")
+        self.estado = VOLVER
+        self._reset_ruta()
+        self.h_elegido = None
+        return True
+
+    def _normal_pared(self, xy):
+        """Hacia donde mira la pared de la foto (unitario, hacia el robot): recta ajustada a los puntos del
+        LiDAR a menos de 0.4 m de la foto. Sin puntos suficientes, la direccion foto -> robot."""
+        x, y = self._pos[:2]
+        hacia = np.array([x - xy[0], y - xy[1]], float)
+        hacia /= max(float(np.linalg.norm(hacia)), 1e-6)
+        sx, sy = self._pts_scan
+        if sx.size < 5:
+            return hacia
+        bx, by, bth = self.pos_scan
+        gx = bx + math.cos(bth) * sx - math.sin(bth) * sy
+        gy = by + math.sin(bth) * sx + math.cos(bth) * sy
+        cerca = np.hypot(gx - xy[0], gy - xy[1]) < 0.4
+        if cerca.sum() < 5:
+            return hacia
+        P = np.stack([gx[cerca], gy[cerca]], 1)
+        P = P - P.mean(0)
+        _, sv, vt = np.linalg.svd(P, full_matrices=False)
+        if sv[0] < 3 * max(sv[1], 1e-6):                       # no es una recta (esquina, ruido): no confiar
+            return hacia
+        n = np.array([-vt[0, 1], vt[0, 0]])
+        return n if n @ hacia > 0 else -n
+
+    def _leer_qr(self, now, pos):
+        """Frente a la foto de la buscada. Primero se pone DE FRENTE (a 0.6 m sobre la normal de la pared: de
+        costado el QR no se lee aunque la cara si se reconozca); despues quieto -> mira 12 grados a cada lado
+        -> se acerca hasta d_qr -> se aleja un poco -> otra vez. A los qr_max_s se rinde y vuelve igual
+        (anunciara el nombre)."""
+        f = self._qr
+        if now - f["t_ini"] > self.cfg.qr_max_s:
+            self.nota(now, f"no pude leer el QR en {self.cfg.qr_max_s:.0f} s: vuelvo y anuncio el nombre")
+            self.estado = VOLVER
+            self._reset_ruta()
+            return 0.0, 0.0
+        x, y, th = pos
+        if f["paso"] == -1:                                        # ponerse de frente
+            if now - f.get("t_n", -1e9) > 1.0:
+                f["t_n"] = now
+                n = self._normal_pared(self.obj.xy)
+                f["frente"] = tuple(np.asarray(self.obj.xy) + 0.6 * n)
+            fx, fy = f["frente"]
+            d = math.hypot(fx - x, fy - y)
+            if d < 0.12 or now - f["t0"] > 12.0:
+                mirar = math.atan2(self.obj.xy[1] - y, self.obj.xy[0] - x)
+                if abs(wrap(mirar - th)) < 0.1 or now - f["t0"] > 15.0:
+                    f.update(paso=0, t0=now, th0=mirar)
+                return 0.0, float(np.clip(1.8 * wrap(mirar - th), -0.8, 0.8))
+            if self._mapa is not None:
+                return self._por_ruta(now, pos, self._mapa, (fx, fy), 0.15, ("mapa fino", "mapa"), "ponerme de frente")
+            return self._mover(now, pos, math.atan2(fy - y, fx - x) - th, 0.12)
+        o = self.obj.ultima
+        dt = now - f["t0"]
+        if o is not None and now - o.t < 0.6 and self.obj.pose_ultima is not None:
+            f["th0"] = wrap(self.obj.pose_ultima[2] + o.rumbo)    # seguir centrando la foto mientras se la ve
+
+        def girar(obj):
+            return float(np.clip(1.8 * wrap(obj - th), -0.5, 0.5))
+
+        def sig():
+            f["paso"], f["t0"] = (f["paso"] + 1) % 6, now
+
+        paso = f["paso"]
+        if paso == 0:                                              # quieto (la camara toma 2-3 fotos)
+            if dt > 1.5:
+                sig()
+            return 0.0, girar(f["th0"])
+        if paso in (1, 2):                                         # mirar a cada lado: el QR esta en una esquina
+            obj = wrap(f["th0"] + math.radians(12) * (1 if paso == 1 else -1))
+            if abs(wrap(obj - th)) < 0.05 and dt > 0.8 or dt > 3.0:
+                sig()
+            return 0.0, girar(obj)
+        if paso == 3:                                              # acercarse (el QR sale mas grande)
+            if self.libre_frente <= self.cfg.d_qr + 0.02 or dt > 6.0:
+                sig()
+                return 0.0, 0.0
+            return 0.06, girar(f["th0"])
+        if paso == 4:                                              # quieto de cerca
+            if dt > 1.5:
+                sig()
+            return 0.0, girar(f["th0"])
+        if dt > 3.0 or self.libre_atras < 0.45:                    # paso 5: alejarse ~25 cm y repetir
+            sig()
+            return 0.0, 0.0
+        return -0.08, 0.0
 
     def ver_flecha(self, now, o):
         if self.sen is None or not self.cfg.usar_flechas or self.estado not in BUSCANDO:
@@ -287,6 +580,7 @@ class Carrera:
         self.bloq_frente = self.libre_frente < (PUENTE_SUELTA if self.bloq_frente else PUENTE_PARA)
         self._pos = pos
         self._fotos = fotos
+        self._mapa = mapa
         v, w = self._paso(now, pos, scan, mapa, fotos, cam_ok)
         self._now = now
         if self.traza is not None:
@@ -296,7 +590,7 @@ class Carrera:
     @property
     def quiere_mapa(self):
         """Si este paso necesita la imagen del mapa (cuesta ~1 ms: solo se pide cuando hace falta)."""
-        return (self.estado in (VOLVER, EXPLORAR) or (self.estado == ACERCAR and self.por_mapa)
+        return (self.estado in (VOLVER, EXPLORAR, LEER_QR) or (self.estado == ACERCAR and self.por_mapa)
                 or (self.estado == IDA and self.mirada is not None and self.mirada.toca(self._now)))
 
     def _paso(self, now, pos, scan, mapa, fotos, cam_ok):
@@ -315,6 +609,12 @@ class Carrera:
             self._reversa = -1e9                                # atras tambien hay algo: deja de retroceder
         if now < self._maniobra[0]:
             return 0.0, self._maniobra[1]
+        if self._mirar and self.estado in BUSCANDO:
+            err = wrap(self._mirar[0] - th)
+            if abs(err) < 0.08:
+                self._mirar.pop(0)
+            self._prog = None                                   # mirar no es estar atascado
+            return 0.0, float(np.clip(2.0 * err, -1.0, 1.0))
         if self.estado == IDA:
             return self._ida(now, pos, scan, mapa, fotos, cam_ok)
         if self.estado == EXPLORAR:
@@ -323,6 +623,8 @@ class Carrera:
             return self._acercar(now, pos, mapa)
         if self.estado == RECONOCER:
             return self._reconocer(now, pos)
+        if self.estado == LEER_QR:
+            return self._leer_qr(now, pos)
         if self.estado == VOLVER:
             return self._volver(now, pos, mapa)
         return 0.0, 0.0
@@ -479,6 +781,7 @@ class Carrera:
             # perdida de vista: ir (por el mapa si hace falta) a donde estaba y, ya cerca, girar buscandola
             if sin_ver > 30.0:
                 self.nota(now, "no encuentro la cara donde la vi: vuelvo a explorar")
+                self.obj.t_ignorar = now + 25.0                 # con --buscar: no volver a elegirla enseguida
                 self.estado = IDA
                 self.h_pref = hacia
                 self.giro_hasta = now + 4.0
@@ -562,9 +865,42 @@ class Carrera:
         return 0.0, float(np.clip(w, -0.6, 0.6))
 
     def _decidir(self, now, por):
+        if self.cfg.buscar:
+            return self._decidir_buscar(now, por)
         self.nombre, self.prob = self.vot.lider()
         self.t_b = self.t_b or now
         top = ", ".join(f"{n} {p:.2f}" for n, p in self.vot.top(3))
+        self.nota(now, f"ES {self.nombre} (p={self.prob:.2f}, {self.vot.n} fotos, por {por}; {top}): VOLVER")
+        self.estado = VOLVER
+        self._reset_ruta()
+        self.h_elegido = None
+        return 0.0, 0.0
+
+    def _decidir_buscar(self, now, por):
+        """Frente a una candidata: si es la buscada, leer su QR (o volver si ya se leyo); si no, la siguiente."""
+        c = self.obj
+        nombre, p = self.vot.lider()
+        top = ", ".join(f"{n} {q:.2f}" for n, q in self.vot.top(3))
+        if nombre == self.cfg.buscar:
+            c.estado = "objetivo"
+            self.nombre, self.prob = nombre, p
+            self.t_b = self.t_b or now
+            if not self.cfg.leer_qr:
+                return self._decidir_fin(now, por, top)
+            self.nota(now, f"foto #{c.id} ES {nombre} (p={p:.2f}, {self.vot.n} fotos, por {por}; {top}): LEER_QR")
+            self.estado = LEER_QR
+            self._qr = dict(paso=-1, t0=now, th0=self._pos[2], t_ini=now)
+            self._reset_ruta()
+            return 0.0, 0.0
+        c.estado = "otra"
+        self.nota(now, f"foto #{c.id} es {nombre}, no {self.cfg.buscar} (p={p:.2f}, por {por}): busco otra")
+        self._elegir_candidata(now)
+        if self.estado == RECONOCER:                               # no hay otra a la que ir todavia
+            self.estado = IDA
+            self.t_nuevo = now
+        return 0.0, 0.0
+
+    def _decidir_fin(self, now, por, top):
         self.nota(now, f"ES {self.nombre} (p={self.prob:.2f}, {self.vot.n} fotos, por {por}; {top}): VOLVER")
         self.estado = VOLVER
         self._reset_ruta()
