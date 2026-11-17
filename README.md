@@ -15,7 +15,7 @@ Choques y respuestas equivocadas tienen penalidad.
 | **A** (autónoma) | LiDAR + odometría, sin intervención humana | Cámara del robot: busca a la persona entre las fotos de la meta y lee su QR |
 | **B** (gestos) | Gestos de una persona captados por la webcam de la PC (sin teclado, ratón ni mando) | Igual que en A |
 
-### Estado (16/11)
+### Estado (17/11)
 
 | | Hecho | Falta |
 |---|---|---|
@@ -92,7 +92,7 @@ en una rama nueva desde `master` y se une con un pull request.
 | `master` | Todo lo vigente | ★ usar esta |
 | `task-a/carrera` | carrera-1 de Diego | Igual a `master` (ya unida) |
 | `task-a/carrera-mejoras` | Mejoras de Alvaro (PR #1) | Ya unida a `master`: se puede borrar |
-| `task-a/qr-persona` | Varias fotos + QR, `probar_vision.py --qr` | Para unir a `master` |
+| `task-a/qr-persona` | Varias fotos + QR, croquis fiel, `lab:N`, laberintos, señales de color, FILA | Unida a `master` el 17/11 (PR #2): se puede borrar |
 | `task-b/gestos` | Gestos de Sofía | Los gestos están en `master` desde el 9/11. Su último commit ("add: simulation") es de la Tarea A sobre una versión vieja de auto-1 y choca con `master`: se archiva con el tag `archivo/task-b-gestos` |
 | `manzana-zanabu` | laberinto-1 (Marcelino y Sofía): señales por color, QR, auto-1 con registro de caras | **No unir a `master` tal cual**: renombra `coverage.py` (rompe carrera-1), sube ~68 MB de resultados y modelos, y su README de `fast-set-up` tiene contraseñas (el repo es público). El lector de QR se pasó a carrera-1 (`qr.py`). Se archiva con el tag `archivo/manzana-zanabu` |
 
