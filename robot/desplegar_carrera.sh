@@ -42,7 +42,7 @@ case "$MODE" in
     echo "[..] copiando a $TARGET:~/$DIR (codigo + modelos, sin fotos ni corridas; ~20 MB)"
     tar czf - --exclude='__pycache__' --exclude='corridas' --exclude='fotos' --exclude='mapas' --exclude='*.mp4' \
         --exclude='reconocimiento/modelos/*r50*' \
-        tb4 reconocimiento task-a/slam-1 task-a/auto-1 task-a/carrera-1 requirements.txt \
+        tb4 reconocimiento task-a/slam-1 task-a/auto-1 task-a/carrera-1 requirements.txt robot/oakd_caras.json robot/oakd_caras.md \
       | "${SSH[@]}" "$TARGET" "mkdir -p ~/$DIR && tar xzf - -C ~/$DIR && echo '[ok] copiado en ~/$DIR'"
     echo "Siguiente: $0 --instalar (solo la primera vez) y luego $0 --verificar"
     ;;

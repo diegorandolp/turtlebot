@@ -354,7 +354,8 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
                     if ver:
                         caras, flechas, qrs = [], [], []
                     else:
-                        caras, flechas, qrs = per.procesar(img, pos, scan, now, sens["w"], pos_scan[2], leer_qr=leer_qr)
+                        caras, flechas, qrs = per.procesar(img, pos, scan, now, sens["w"], pos_scan[2], leer_qr=leer_qr,
+                                                           cajas=robot.det() if args.cam_nn else None)
                     pendientes.append((now + args.cam_latencia, now, img, caras, flechas, qrs))
                     t_cam = now + (0.3 if ver else (max(args.cam_periodo, 0.3) if hd else args.cam_periodo))
                 listos = [p[1:] for p in pendientes if p[0] <= now]
@@ -524,6 +525,8 @@ def parse(argv=None):
     ap.add_argument("--hfov-hd", type=float, default=69.0, help="campo de vision horizontal de la foto HD, en grados")
     ap.add_argument("--engine", choices=("auto", "breezy", "odom"), default="odom", help="mapa: odometria (defecto) o BreezySLAM")
     ap.add_argument("--max-t", type=float, default=180.0, help="s maximos de la corrida (el limite del profe: 3 min)")
+    ap.add_argument("--cam-nn", action="store_true",
+                    help="(--sim) imitar la deteccion de caras EN la camara (chip de la OAK-D): YuNet solo en recortes")
     ap.add_argument("--cam-periodo", type=float, default=None, help="(--sim) s entre fotos (defecto 0.15, con --hd 0.3)")
     ap.add_argument("--cam-latencia", type=float, default=0.15, help="(--sim) s de retraso de cada foto")
     ap.add_argument("--camara-caida", action="store_true", help="(--sim) la camara no da imagenes")
@@ -559,7 +562,7 @@ def crear_sim(args):
     hd = args.hd or bool(mundo.qr and not args.qr_sin_hd)                # con QR: la camara HD existe
     robot = SimRobot(mundo, hfov=args.hfov, camara_ok=not args.camara_caida,
                      foto_hd=(1280, 720, args.hfov_hd) if hd else None,
-                     odom_ruido=args.odom_ruido, odom_sesgo=args.odom_sesgo)
+                     odom_ruido=args.odom_ruido, odom_sesgo=args.odom_sesgo, cam_nn=args.cam_nn)
     return mundo, robot
 
 

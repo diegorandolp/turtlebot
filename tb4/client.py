@@ -101,6 +101,7 @@ class TB4Client:
         self.sock.settimeout(0.2)
         self.lock = threading.Lock()
         self._scan = self._pose = self._status = None
+        self._det = None         # (stamp, [(x0, y0, x1, y1, conf)], recibido): caras detectadas EN la camara
         self._cmd = (0.0, 0.0)
         self._cmd_time = 0.0
         self._seq = 0
@@ -132,6 +133,14 @@ class TB4Client:
 
     def pose(self):
         return self._pose
+
+    def det(self, max_edad=0.5):
+        """Cajas de caras detectadas en la propia camara (robot/tb4_bridge.py --nn-topic), en fraccion 0..1 del
+        cuadro, si llegaron hace menos de `max_edad` s; None si el puente no las manda (o estan viejas)."""
+        d = self._det
+        if d is None or time.monotonic() - d[2] > max_edad:
+            return None
+        return d[1]
 
     def move(self, v, w):
         """Velocidad lineal v (m/s, + adelante) y angular w (rad/s, + izquierda).
@@ -247,6 +256,9 @@ class TB4Client:
         elif kind == P.ODOM:
             stamp, x, y, yaw, v, w = P.unpack_odom(payload)
             self._pose = Pose(x, y, yaw, v, w, stamp, now)
+        elif kind == P.DET:
+            stamp, cajas = P.unpack_det(payload)
+            self._det = (stamp, cajas, now)
         elif kind == P.STATUS:
             _, bat, docked, flags, driver, front, rear, n = P.unpack_status(payload)
             self._status = Status(

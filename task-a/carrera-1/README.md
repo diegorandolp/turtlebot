@@ -486,30 +486,42 @@ archivo (`--go`) y el anuncio lo lee la PC del log (`robot/escuchar_anuncio.py`)
 queda en A con el volumen alto. Si la Wi-Fi se cae a mitad de carrera **no pasa nada**: la carrera y el
 puente están en el robot; solo se pierde la voz, y el anuncio queda en `carrera.log` y en el video.
 
-El riesgo es el CPU. `medir_cpu.py` mide cada pieza (no necesita robot). En una PC x86 (1 núcleo):
+**Dónde se va el CPU** (perfil de una carrera completa en `croquis+6`, PC x86, 1 núcleo): antes de optimizar,
+la ventana dinámica (Python + numpy, 20 veces por segundo) costaba **12.7 s de 32.5 s**, más que YuNet
+(3.5 s) y ArcFace (3.3 s) juntos. Es decir: la parte en Python sí era el cuello de botella, no las redes.
+Dos cambios, sin reescribir nada en otro lenguaje:
+
+1. **Ventana dinámica 12 → 2.2 ms** por llamada: los arcos se calculan una vez y se guardan (antes 20 veces
+   por segundo), todo en float32 con distancias al cuadrado, y del LiDAR se usa solo el punto **más cercano de
+   cada sector de 1.5°** dentro de 1 m (≤ 240 puntos en vez de ~550; lo descartado está más lejos que lo que
+   queda, en casi la misma dirección). Misma decisión en las 62 pruebas y 17/17 en el banco.
+2. **Detectar caras en el chip de la cámara** (Myriad X de la OAK-D) y correr YuNet solo en el recorte de cada
+   cara (1–3 ms en vez de 17): la detección pasa de 5.6 s a 1.6 s por carrera. En el simulador se imita con
+   `--cam-nn` (10/10 en el banco). Con el robot hay que configurar la red en la cámara y el puente:
+   **[robot/oakd_caras.md](../../robot/oakd_caras.md)** (no probado todavía). Si la cámara no manda cajas,
+   todo funciona como antes.
+
+`medir_cpu.py` mide cada pieza (no necesita robot). En una PC x86 (1 núcleo), después de los cambios:
 
 | Pieza | Preview 250×250 | HD 1280×720 |
 |---|---:|---:|
-| Detectar caras (YuNet) | 17 ms | 36 ms |
+| Detectar caras (YuNet) en la imagen entera | 17 ms | 36 ms |
+| Detectar caras con cajas de la cámara (`en_cajas`) | 1–3 ms por cara | 3–6 ms por cara |
 | Reconocer una cara (ArcFace mbf) | 35 ms | 38 ms |
 | Detectar flechas | 5 ms | 45 ms |
-| Ventana dinámica (cada paso de control) | 9 ms | 9 ms |
+| Ventana dinámica (cada paso de control) | 2 ms | 2 ms |
 | Integrar un scan al mapa | 2.5 ms | 2.3 ms |
-| Ruta en el mapa (Dijkstra) | 8 ms | 7 ms |
-| **Carrera a ritmo normal** | **58 % de un núcleo** | **99 % de un núcleo** |
+| Ruta en el mapa (Dijkstra) | 6 ms | 7 ms |
+| **Carrera a ritmo normal** | **~45 % de un núcleo** | **~85 % de un núcleo** |
 
-Una Raspberry Pi 4 es varias veces más lenta por núcleo que esa PC (estimación: 3–5×) y ya corre ROS,
-el LiDAR, la cámara y el puente. **Hay que medirlo en el robot** (`python3 task-a/carrera-1/medir_cpu.py`
-por SSH). Si no alcanza, por orden de esfuerzo:
+Una Raspberry Pi 4 es 3–5× más lenta por núcleo que esa PC y ya corre ROS, el LiDAR, la cámara y el puente.
+**Hay que medirlo en el robot** (`robot/desplegar_carrera.sh --medir`). Si no alcanza, por orden de esfuerzo:
 
-1. Menos fotos por segundo (`--cam-periodo 0.3`) y sin `--hd` salvo para leer el QR de cerca.
-2. Reconocer solo la cara más grande y solo cuando mide lo suficiente (hoy ya es así desde `min_px`).
-3. Repartir en núcleos: la cámara (detectar + reconocer) en otro proceso; la Raspberry tiene 4.
-4. Detectar caras **en la propia cámara**: la OAK-D tiene un chip para redes neuronales (Myriad X) que
-   puede correr el detector de caras sin usar la Raspberry.
-
-Reescribir en otro lenguaje (Rust, C++) ayuda poco: lo caro son las redes neuronales, que OpenCV ya corre
-en C++. La lógica en Python (ventana dinámica, mapa) cuesta poco.
+1. Caras en la cámara (arriba) y menos fotos por segundo (`--cam-periodo 0.3`), sin `--hd` salvo para el QR.
+2. Repartir en núcleos: la cámara (detectar + reconocer) ya va en otro hilo; OpenCV puede usar 2 hilos
+   (`cv2.setNumThreads(2)`); la Raspberry tiene 4.
+3. ¿Reescribir en Rust/C++? Ayuda poco: lo que queda caro son las redes (YuNet, ArcFace), que OpenCV ya corre
+   en C++; la lógica en Python ya está por debajo del 10 % tras el punto 1.
 
 ## Límites conocidos (lo que falta comprobar con el robot real)
 

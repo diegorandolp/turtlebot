@@ -114,6 +114,15 @@ class Bridge(Node):
         self.create_subscription(LaserScan, "/scan", self.on_scan, qos_profile_sensor_data)
         self.create_subscription(Odometry, "/odom", self.on_odom, qos_profile_sensor_data)
         self.create_subscription(BatteryState, "/battery_state", self.on_battery, qos_profile_sensor_data)
+        if args.nn_topic:
+            # Caras detectadas EN la camara (red neuronal en el chip Myriad X de la OAK-D, configurada en el
+            # launch de la camara: ver robot/oakd_caras.md). Se reenvian a la PC como cajas en fraccion del cuadro.
+            try:
+                from vision_msgs.msg import Detection2DArray
+                self.create_subscription(Detection2DArray, args.nn_topic, self.on_det, qos_profile_sensor_data)
+                self.get_logger().info(f"Caras detectadas en la camara: {args.nn_topic}")
+            except ImportError:
+                self.get_logger().warning("vision_msgs no esta instalado: sin --nn-topic")
         self.dock_client = self.undock_client = None
         try:
             from irobot_create_msgs.action import Dock, Undock
@@ -222,6 +231,21 @@ class Bridge(Node):
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         self.broadcast(P.pack_scan(self.token, stamp, angle_min, msg.angle_increment,
                                    msg.range_min, msg.range_max, ranges))
+
+    def on_det(self, msg):
+        """vision_msgs/Detection2DArray (depthai_ros_driver: centro y tamano en pixeles del cuadro de la red,
+        o normalizados 0..1 segun la version) -> cajas (x0, y0, x1, y1, conf) en fraccion del cuadro."""
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        cajas = []
+        for d in msg.detections:
+            cx, cy, w, h = d.bbox.center.position.x, d.bbox.center.position.y, d.bbox.size_x, d.bbox.size_y
+            if max(cx, cy, w, h) > 1.5:                                  # en pixeles: pasar a fraccion
+                W, H = self.args.nn_ancho, self.args.nn_alto
+                cx, cy, w, h = cx / W, cy / H, w / W, h / H
+            conf = max((r.hypothesis.score for r in d.results), default=1.0)
+            if conf >= self.args.nn_conf:
+                cajas.append((max(0.0, cx - w / 2), max(0.0, cy - h / 2), min(1.0, cx + w / 2), min(1.0, cy + h / 2), conf))
+        self.broadcast(P.pack_det(self.token, stamp, cajas))
 
     def on_odom(self, msg):
         p, q, t = msg.pose.pose.position, msg.pose.pose.orientation, msg.twist.twist
@@ -409,6 +433,11 @@ def main():
     ap.add_argument("--hd-topic", default="/oakd/rgb/image_raw",
                     help="camara de las fotos HD (Image, o CompressedImage si termina en /compressed)")
     ap.add_argument("--hd-width", type=int, default=1280, help="ancho maximo de las fotos HD (0 = sin achicar)")
+    ap.add_argument("--nn-topic", default="", help="caras detectadas en la camara (vision_msgs/Detection2DArray, "
+                    "p. ej. /oakd/nn/detections); vacio = no usar. Ver robot/oakd_caras.md")
+    ap.add_argument("--nn-ancho", type=int, default=300, help="ancho del cuadro de la red (si las cajas vienen en px)")
+    ap.add_argument("--nn-alto", type=int, default=300, help="alto del cuadro de la red (si las cajas vienen en px)")
+    ap.add_argument("--nn-conf", type=float, default=0.5, help="confianza minima de una caja")
     ap.add_argument("--foto-mantener", type=float, default=3.0,
                     help="s que la suscripcion a la camara sigue abierta despues del ultimo pedido")
     args = ap.parse_args()

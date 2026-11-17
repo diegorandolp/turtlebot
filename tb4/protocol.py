@@ -10,7 +10,7 @@ Formato de cada datagrama (little-endian):
               paquetes de otro grupo que use el mismo puerto (no es seguridad real).
 
 PC -> robot:  HELLO, BYE, CMD(seq, v, w), PHOTO(req, calidad[, camara]), DOCK(req), UNDOCK(req)
-Robot -> PC:  SCAN, ODOM, STATUS, IMG (trozos de un JPEG), EVENT (respuestas)
+Robot -> PC:  SCAN, ODOM, STATUS, IMG (trozos de un JPEG), EVENT (respuestas), DET (caras detectadas en la camara)
 
 Convencion de ejes (base_link del robot): x adelante, y izquierda, angulos en radianes,
 0 = frente, positivo = izquierda (antihorario). El puente ya aplica el giro del LiDAR.
@@ -30,6 +30,7 @@ DEFAULT_KEY = "grupo3"
 # Tipos de paquete
 HELLO, BYE, CMD, PHOTO, DOCK, UNDOCK = b"H", b"B", b"C", b"P", b"D", b"U"
 SCAN, ODOM, STATUS, IMG, EVENT = b"s", b"o", b"t", b"i", b"e"
+DET = b"n"                 # robot -> PC: cajas de caras detectadas EN la camara (chip Myriad X de la OAK-D)
 
 _HEADER = struct.Struct("<4sBc8s")
 _CMD = struct.Struct("<Iff")              # seq, v (m/s), w (rad/s)
@@ -39,6 +40,8 @@ _PHOTO_CAM = struct.Struct("<IBB")        # id, calidad JPEG, camara (PREVIEW | 
 _SCAN = struct.Struct("<dfffH")           # stamp, angle_min, angle_inc, range_max, n
 _ODOM = struct.Struct("<dfffff")          # stamp, x, y, yaw, v, w
 _STATUS = struct.Struct("<dfBBBffB")      # stamp, bateria, docked, flags, driver, front, rear, n_clientes
+_DET = struct.Struct("<dB")               # stamp, n cajas; luego n x _CAJA
+_CAJA = struct.Struct("<fffff")           # x0, y0, x1, y1 (fraccion 0..1 del cuadro de la camara), confianza
 _IMG = struct.Struct("<IHH")              # id, indice del trozo, total de trozos
 _EVENT = struct.Struct("<IB")             # id, ok + texto utf-8
 
@@ -158,6 +161,19 @@ def pack_odom(token, stamp, x, y, yaw, v, w):
 
 def unpack_odom(payload):
     return _ODOM.unpack_from(payload)
+
+
+def pack_det(token, stamp, cajas):
+    """cajas: lista de (x0, y0, x1, y1, conf) en fraccion del cuadro (0..1). Vacia tambien se manda: 'no hay caras'."""
+    cajas = list(cajas)[:20]
+    return pack(DET, token, _DET.pack(stamp, len(cajas)) + b"".join(_CAJA.pack(*c) for c in cajas))
+
+
+def unpack_det(payload):
+    stamp, n = _DET.unpack_from(payload)
+    if len(payload) < _DET.size + n * _CAJA.size:
+        raise ProtocolError("DET truncado")
+    return stamp, [_CAJA.unpack_from(payload, _DET.size + i * _CAJA.size) for i in range(n)]
 
 
 def pack_status(token, stamp, battery, docked, flags, is_driver, front, rear, n_clients):

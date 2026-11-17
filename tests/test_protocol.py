@@ -135,3 +135,21 @@ class SafetyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DetTests(unittest.TestCase):
+    """DET: caras detectadas en la camara (robot -> PC)."""
+
+    def test_det_ida_y_vuelta(self):
+        cajas = [(0.1, 0.2, 0.3, 0.5, 0.9), (0.0, 0.0, 1.0, 1.0, 0.5)]
+        kind, payload = P.unpack(P.pack_det(TOKEN, 12.5, cajas), TOKEN)
+        self.assertEqual(kind, P.DET)
+        stamp, out = P.unpack_det(payload)
+        self.assertAlmostEqual(stamp, 12.5)
+        self.assertEqual(len(out), 2)
+        for a, b in zip(cajas, out):
+            for u, v in zip(a, b):
+                self.assertAlmostEqual(u, v, places=5)
+        self.assertEqual(P.unpack_det(P.unpack(P.pack_det(TOKEN, 1.0, []), TOKEN)[1])[1], [])
+        with self.assertRaises(P.ProtocolError):
+            P.unpack_det(P.unpack(P.pack_det(TOKEN, 1.0, cajas), TOKEN)[1][:-3])
