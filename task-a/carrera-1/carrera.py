@@ -109,7 +109,8 @@ def armar(args, excluir=()):
         from qr import lector
         print(f"[ok] busco a {buscar}; lector de QR: {lector()}"
               + ("" if lector() == "wechat" else " (con opencv-contrib-python se lee desde mas lejos)"))
-    cfg = Config(vmax=args.vel, vmax_vuelta=min(0.31, args.vel + 0.02), temprano=args.temprano,
+    # > 0.31 m/s solo con `safety_override: full` en la Create 3 (ver README, "Mas rapido en las rectas")
+    cfg = Config(vmax=args.vel, vmax_vuelta=min(max(0.31, args.vel), args.vel + 0.02), temprano=args.temprano,
                  usar_flechas=not args.sin_flechas, buscar=buscar, leer_qr=not args.sin_qr)
     pl_fino = Planner(MAP_M, MAP_PX, cell=2, robot_radius=0.10, margin=0.0)
     nav = Carrera(cfg, pl, vot, Objetivo(vot), Senales(min_n=2), exp, planner_fino=pl_fino)

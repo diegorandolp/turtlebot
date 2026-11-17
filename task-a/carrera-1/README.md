@@ -474,6 +474,8 @@ después (traer el video). Todo está en `robot/desplegar_carrera.sh` (variables
 ```bash
 robot/desplegar_carrera.sh                   # 1) copia tb4/, reconocimiento/ (modelos mbf), slam-1, auto-1, carrera-1 a ~/turtlebot
 robot/desplegar_carrera.sh --instalar        # 2) una vez, con internet en el robot: numpy + opencv-contrib-python-headless
+robot/desplegar_carrera.sh --bajar-ruedas    #    sin internet en el lab: bajar antes las ruedas (PC con internet, 60 MB)...
+robot/desplegar_carrera.sh --instalar-offline  #    ...y copiarlas e instalarlas en el robot sin red (con pip o descomprimiendo)
 robot/desplegar_carrera.sh --verificar       # 3) verificar_pi.py EN el robot: librerías, modelos, puente, LiDAR, memoria, ms por pieza
 robot/desplegar_carrera.sh --medir           #    medir_cpu.py EN el robot: % de un núcleo a ritmo normal
 robot/desplegar_carrera.sh --servicio        # 4) instala robot/carrera.service: la carrera arranca sola al encender el robot
@@ -533,6 +535,28 @@ Una Raspberry Pi 4 es 3–5× más lenta por núcleo que esa PC y ya corre ROS, 
    (`cv2.setNumThreads(2)`); la Raspberry tiene 4.
 3. ¿Reescribir en Rust/C++? Ayuda poco: lo que queda caro son las redes (YuNet, ArcFace), que OpenCV ya corre
    en C++; la lógica en Python ya está por debajo del 10 % tras el punto 1.
+
+## Más rápido en las rectas (por probar con el robot)
+
+La ventana dinámica ya pide el máximo en las rectas despejadas (**0.30 m/s** en la ida, 0.31 en la vuelta) y
+baja la velocidad solo con paredes cerca (el puente frena desde 0.60 m) o en los giros. El tope de **0.31 m/s
+es el de seguridad de fábrica de la Create 3**; con `safety_override: full` admite hasta **~0.46 m/s** (a cambio
+de apagar los sensores de desnivel, que en un piso plano no hacen nada; `backup_only` solo libera la marcha
+atrás). Cómo probarlo, en este orden, con el robot en una recta libre de 3 m:
+
+```bash
+# en la PC con ROS (setup/tb4_connect.sh) o por SSH en el robot (source /etc/turtlebot4/setup.bash):
+ros2 param get /motion_control safety_override                 # none (de fabrica)
+ros2 param set /motion_control safety_override full            # vale hasta que se reinicie la Create 3
+python -m herramientas.monitor --drive                         # subir con + hasta 0.45 y ver que avanza a esa velocidad
+python task-a/carrera-1/carrera.py --undock --buscar "Nombre" --vel 0.45 --video   # la carrera a 0.45 en rectas
+```
+
+Qué mirar: que a 0.45 m/s frene antes de una caja (el puente frena a 0.28 m; a 0.45 m/s la distancia de
+parada es ~0.1 m, alcanza) y que la odometría no empeore (patinar al arrancar). Si pasa las dos, usar
+`--vel 0.45` en la competencia; si no, se queda en 0.30. En el simulador (`croquis`, con señales) 0.45 baja el
+tiempo de 69 s a 50 s sin choques. El parámetro vuelve a `none` al reiniciar la Create
+3: hay que ponerlo en cada sesión (o dejarlo en `robot/tb4_inicio.sh`).
 
 ## Límites conocidos (lo que falta comprobar con el robot real)
 
