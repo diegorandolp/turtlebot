@@ -22,6 +22,7 @@ tambien el video del recorrido en corridas/videos/ (camara, mapa, vista real y e
 real o en el simulador.
 """
 import argparse
+import os
 import json
 import math
 import sys
@@ -526,8 +527,8 @@ def guardar(res, carpeta=HERE / "corridas"):
 
 def parse(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("ip", nargs="?", default="192.168.0.104",
-                    help="IP del robot (defecto 192.168.0.104; 127.0.0.1 si corre EN el robot)")
+    ap.add_argument("ip", nargs="?", default=os.environ.get("TB4_IP", "192.168.0.104"),
+                    help="IP del robot (defecto $TB4_IP o 192.168.0.104; 127.0.0.1 si corre EN el robot)")
     ap.add_argument("--sim", action="store_true", help="simulador en vez del robot real")
     ap.add_argument("--mundo", default="demo",
                     help="(--sim) demo | demo-sin-flechas | sala | aleatorio:N[:sin] | croquis[:W:H] | denso:N[:W:H]; "

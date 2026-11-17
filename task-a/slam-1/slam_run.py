@@ -13,6 +13,7 @@ Teclas (ventana enfocada):
   u sacar del dock   l ver/ocultar el LiDAR en vivo (amarillo)   m guardar el mapa ahora   q / Esc salir (guarda)
 """
 import argparse
+import os
 import json
 import math
 import sys
@@ -86,7 +87,7 @@ def save_map(engine, outdir, size_m):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("ip", nargs="?", default="192.168.0.103")
+    ap.add_argument("ip", nargs="?", default=os.environ.get("TB4_IP", "192.168.0.104"))
     ap.add_argument("--drive", action="store_true", help="conducir con el teclado")
     ap.add_argument("--undock", action="store_true", help="sacar el robot del dock al empezar")
     ap.add_argument("--engine", choices=("auto", "breezy", "odom"), default="auto")

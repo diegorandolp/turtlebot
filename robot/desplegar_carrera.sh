@@ -20,11 +20,11 @@
 #   robot/desplegar_carrera.sh --sin-servicio  # lo desinstala (para volver a --correr a mano)
 #
 # Requiere el puente corriendo en el robot (robot/tb4_inicio.sh o robot/deploy_bridge.sh): la carrera le habla
-# en 127.0.0.1. Variables: TB4_IP (192.168.0.103), SSHPASS (si tienes sshpass), CARRERA_ARGS (extra para carrera.py,
+# en 127.0.0.1. Variables: TB4_IP (192.168.0.104), SSHPASS (si tienes sshpass), CARRERA_ARGS (extra para carrera.py,
 # p. ej. CARRERA_ARGS="--hd --cam-periodo 0.3").
 set -euo pipefail
 
-IP="${TB4_IP:-192.168.0.103}"
+IP="${TB4_IP:-192.168.0.104}"
 TARGET="ubuntu@$IP"
 DIR="turtlebot"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

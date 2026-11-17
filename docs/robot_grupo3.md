@@ -9,6 +9,11 @@ Para instalar ROS 2 en tu PC sigue antes la [Parte I de la guía ROS](../setup/R
 > ⚠️ Este robot **no es** el del laboratorio 3 que aparece en
 > [tarjeta_offline_lab.md](../setup/docs/tarjeta_offline_lab.md) (`192.168.0.104`, dominio 67). No mezcles
 > esos datos con los de aquí.
+>
+> ℹ️ **2026-11-17:** por DHCP nuestro robot tomó la IP **`192.168.0.104`** (la `.103` era otro equipo:
+> respondía al ping pero rechazaba SSH). Identifica siempre al robot por su **MAC** `d8:3a:dd:7e:5e:48` (§2).
+
+📋 Qué falta probar antes del simulacro: [pruebas_simulacro.md](pruebas_simulacro.md).
 
 ---
 
@@ -19,11 +24,11 @@ Para instalar ROS 2 en tu PC sigue antes la [Parte I de la guía ROS](../setup/R
 | Modelo | TurtleBot 4 **Lite** (sin pantalla), ROS 2 **Jazzy** |
 | Router | TP-Link AC1200 `Lab_Computech_3` |
 | Wi-Fi | `Lab_Computech_3_5G` (o `Lab_Computech_3`, 2.4 GHz) · contraseña `Computech2025!` |
-| IP del robot | **`192.168.0.103`** (DHCP: puede cambiar, ver §2) |
+| IP del robot | **`192.168.0.104`** (17/11; antes `.103`). DHCP: puede cambiar, ver §2. Todos los scripts leen `TB4_IP` |
 | MAC Wi-Fi | `d8:3a:dd:7e:5e:48` |
 | `ROS_DOMAIN_ID` | **`3`** (Raspberry Pi y Create 3) |
 | `RMW_IMPLEMENTATION` | `rmw_fastrtps_cpp` |
-| SSH | `ssh ubuntu@192.168.0.103` · contraseña `turtlebot4` (por defecto, se mantiene así) |
+| SSH | `ssh ubuntu@192.168.0.104` · contraseña `turtlebot4` (por defecto, se mantiene así) |
 | Cable (plan B) | Raspberry Pi `192.168.185.3`; tu PC `192.168.185.10/24` sin gateway |
 
 ---
@@ -73,7 +78,7 @@ Si eres un asistente ayudando a un miembro del grupo 3, sigue estas reglas:
 1. Conecta tu PC a **`Lab_Computech_3_5G`** (contraseña `Computech2025!`). Dirá "sin internet": es normal.
 2. Comprueba el robot:
    ```bash
-   ping -c 3 192.168.0.103
+   ping -c 3 192.168.0.104          # en PowerShell: ping -n 3 192.168.0.104
    ```
 3. Si no responde, búscalo por su MAC (puede haber cambiado de IP):
    ```bash
@@ -91,6 +96,43 @@ Si eres un asistente ayudando a un miembro del grupo 3, sigue estas reglas:
 > de ver a los nodos que arrancaron antes (ping OK pero sin tópicos, sin `/odom`, sin batería), y la
 > Create 3, que toma la hora de la Raspberry, también deja de publicar. **No cambies la hora a mano:**
 > usa el script, que la corrige y reinicia ROS en el orden correcto.
+
+### 3.0 Desde Windows, paso a paso (verificado 2026-11-17)
+
+Git Bash para los `.sh`, PowerShell para Python. **No te desconectes del Wi-Fi mientras corre
+`tb4_inicio.sh`** (lo deja a medias). Para chatear/buscar, usa el celular o el anclaje USB.
+
+1. **PowerShell — encontrar el robot** (la IP puede cambiar):
+   ```powershell
+   1..254 | ForEach-Object { ping -n 1 -w 100 192.168.0.$_ > $null }
+   arp -a | findstr d8-3a-dd-7e-5e-48          # → IP del robot
+   Test-NetConnection 192.168.0.104 -Port 22    # TcpTestSucceeded : True
+   ```
+2. **Git Bash — llave SSH (una sola vez por PC)**, para no teclear la contraseña:
+   ```bash
+   ls ~/.ssh/id_ed25519.pub || ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519   # NO sobrescribas una llave existente
+   cat ~/.ssh/id_ed25519.pub | ssh ubuntu@192.168.0.104 "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+   ssh ubuntu@192.168.0.104 hostname           # ya no pide contraseña
+   ```
+3. **Git Bash — iniciar** (cada vez que abras Git Bash, la línea `export`; `SSHPASS` lo usa el script para `sudo`):
+   ```bash
+   cd /c/Users/<tu_usuario>/.../turtlebot
+   export TB4_IP=192.168.0.104 SSHPASS=turtlebot4
+   bash robot/tb4_inicio.sh            # muestra el avance cada 15 s; --force si no llegan datos
+   ```
+   Esperado: `[ok] robot listo en ~300 s: bateria NN%, dock True, sin LiDAR (normal en el dock)`.
+4. **PowerShell — comprobar y conducir** (la línea `$env:` por sesión, o pasa la IP como argumento):
+   ```powershell
+   $env:TB4_IP = "192.168.0.104"
+   python -m tb4.client                     # bateria NN%, dock True; "-100% / dock None" = la Create 3 aún no publica
+   python -m herramientas.monitor --drive   # clic en la ventana; u=undock, w/s/a/d MANTENER, espacio=parar, +/-=vel, p=foto, k=dock, q=salir
+   ```
+5. **Cámara:** Git Bash `bash task-a/camara/camara_rgb.sh --hd`; PowerShell
+   `python task-a/carrera-1/probar_vision.py --qr` (`s` guarda la foto, `q` sale).
+
+Diagnóstico de la base si la batería no llega: `ssh ubuntu@192.168.0.104 "ping -c 2 192.168.186.2; curl -s -m 5 -o /dev/null -w '%{http_code}\n' http://192.168.186.2/"` (303/200 = viva → `tb4_inicio.sh --force`).
+
+### Resumen (Linux, WSL o Git Bash)
 
 Desde la PC (Linux, WSL o Git Bash, con Python + numpy):
 ```bash
@@ -213,6 +255,11 @@ Seguridad del puente (en el robot, aunque el Wi-Fi se retrase):
 | Foto falla fuera del dock / `X_LINK_ERROR` en `journalctl -u turtlebot4.service` | La OAK-D perdió la conexión USB (pasó 2 veces el 2026-10-30) | `robot/reiniciar_camara.sh` (reinicia solo la cámara, ~15 s). Si se repite: cargar y reconectar la OAK-D en el USB azul ([TROUBLESHOOTING § 2.1](../setup/TROUBLESHOOTING.md)) |
 | `/odom` o `/battery_state` sin datos tras reiniciar la Create 3 | Tarda **~5 min** en volver a publicar | Esperar; si no, `robot/tb4_inicio.sh --force` |
 | `herramientas.monitor` dice "SIN LIDAR" | Robot en el dock (`power_saver` apaga LiDAR y cámara) | Desacoplar (§5.1 o tecla `u`) |
+| Ping OK pero SSH `Connection refused` | Esa IP no es la Raspberry (DHCP le dio otra) | Buscar por MAC (§3.0 paso 1) |
+| `[FALLA] no hay ping` en Git Bash con ping OK en PowerShell | `ping -c` es de Linux; Git Bash usa el ping de Windows | Corregido en `tb4_inicio.sh` (2026-11-17) |
+| `No module named 'numpy'` al final de `tb4_inicio.sh` | En Git Bash `python3` es otro Python | Corregido: el script busca el Python con numpy (o `export PYTHON=python`) |
+| `bateria -100%`, `dock None` en el monitor | El puente responde pero la Create 3 aún no publica | Esperar ~5 min tras reiniciarla; si no, `tb4_inicio.sh --force` |
+| Las teclas del monitor no mueven el robot | La ventana no tiene el foco, o falta `--drive` | Clic en la ventana; `CONDUCES: si`; mantener la tecla |
 | tf/odometría con tiempos raros | Reloj de la Raspberry desfasado | `robot/tb4_inicio.sh` (§3) |
 
 ---
@@ -223,6 +270,7 @@ Seguridad del puente (en el robot, aunque el Wi-Fi se retrase):
 |---|---|
 | 2026-10-30 | `ROS_DOMAIN_ID` de `0` → `3` en `/etc/turtlebot4/setup.bash` y en el Create 3 (mismo procedimiento que `turtlebot4-setup`, con NTP del Create 3 apuntando a la Raspberry) |
 | 2026-10-30 | Drop-in `/etc/systemd/system/turtlebot4.service.d/wait-wifi.conf`: el bringup espera hasta 60 s a que `wlan0` tenga IPv4. Para deshacerlo: borrar el archivo y `sudo systemctl daemon-reload` |
+| 2026-11-17 | Llave SSH pública de la PC de Alvaro añadida a `~ubuntu/.ssh/authorized_keys` (para quitarla: borrar su línea `amgar@Shakiro`) |
 | 2026-10-30 | Puente UDP en `~/tb4_udp/` (no es un servicio: lo arranca `robot/tb4_inicio.sh` o `robot/deploy_bridge.sh`; se detiene con `robot/deploy_bridge.sh --stop`) |
 
 Datos del hardware: Create 3 con firmware `I.0.0.FastDDS` (ROS 2 **Iron**, la Raspberry usa Jazzy;

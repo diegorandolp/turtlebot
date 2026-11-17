@@ -16,6 +16,7 @@ Teclas (ventana enfocada):
   m guardar mapa         q / Esc salir (parada y guarda el mapa)
 """
 import argparse
+import os
 import math
 import sys
 import time
@@ -201,7 +202,7 @@ def run(robot, args, sim=False, gui=True, detect=None, max_time=1800.0, dt=0.15,
 
 def parse(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("ip", nargs="?", default="192.168.0.103")
+    ap.add_argument("ip", nargs="?", default=os.environ.get("TB4_IP", "192.168.0.104"))
     ap.add_argument("--sim", action="store_true", help="simulador en vez del robot real")
     ap.add_argument("--no-gui", action="store_true", help="sin ventana (solo con --sim)")
     ap.add_argument("--go", action="store_true", help="empezar sin esperar la tecla g (por defecto arranca en pausa)")

@@ -18,6 +18,7 @@ Teclas (con la ventana enfocada):
   +/-    velocidad lineal               u    sacar del dock     k  volver al dock
 """
 import argparse
+import os
 import math
 import threading
 import time
@@ -96,7 +97,7 @@ def text_lines(robot, status, scan, pose, speed, drive, msg):
 
 def main():
     ap = argparse.ArgumentParser(description="Monitor UDP del TurtleBot 4")
-    ap.add_argument("ip", nargs="?", default="192.168.0.103")
+    ap.add_argument("ip", nargs="?", default=os.environ.get("TB4_IP", "192.168.0.104"))
     ap.add_argument("--port", type=int, default=P.DEFAULT_PORT)
     ap.add_argument("--key", default=P.DEFAULT_KEY)
     ap.add_argument("--range", type=float, default=3.0, dest="max_range", help="metros mostrados")

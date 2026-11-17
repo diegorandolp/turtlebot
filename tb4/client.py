@@ -20,6 +20,7 @@ Ejemplo:
 Prueba rapida de conexion (desde la raiz del repositorio):
     python3 -m tb4.client 192.168.0.103
 """
+import os
 import math
 import socket
 import threading
@@ -331,7 +332,7 @@ def _fmt(d):
 def main():
     import argparse
     ap = argparse.ArgumentParser(description="Prueba de conexion con el puente UDP del TB4")
-    ap.add_argument("ip", nargs="?", default="192.168.0.103")
+    ap.add_argument("ip", nargs="?", default=os.environ.get("TB4_IP", "192.168.0.104"))
     ap.add_argument("--port", type=int, default=P.DEFAULT_PORT)
     ap.add_argument("--key", default=P.DEFAULT_KEY)
     ap.add_argument("--seconds", type=float, default=5.0)

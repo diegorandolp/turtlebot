@@ -16,6 +16,7 @@ asi se arma un set para evaluar_flechas.py) · r reinicia la votacion · q / Esc
 Muestra tambien las fotos por segundo: con el robot real conviene >= 4 (si no, no usar --hd).
 """
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -62,7 +63,7 @@ def fuente(a):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("ip", nargs="?", default="192.168.0.104")
+    ap.add_argument("ip", nargs="?", default=os.environ.get("TB4_IP", "192.168.0.104"))
     ap.add_argument("--hd", action="store_true")
     ap.add_argument("--qr", action="store_true", help="leer tambien los QR y mostrar de que cara es cada uno")
     ap.add_argument("--undock", action="store_true", help="sacar el robot del dock primero (retrocede solo)")

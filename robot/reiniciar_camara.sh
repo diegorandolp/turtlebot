@@ -7,7 +7,7 @@
 # Detiene el proceso oakd_container del servicio y lanza la camara aparte
 # (turtlebot4_bringup oakd.launch.py camera:=oakd_lite), con log en ~/tb4_udp/oakd.log del robot.
 # Tras reiniciar el robot, la camara vuelve a arrancar desde el servicio como siempre.
-# Variables: TB4_IP (192.168.0.103), SSHPASS (si tienes sshpass).
+# Variables: TB4_IP (192.168.0.104), SSHPASS (si tienes sshpass).
 set -euo pipefail
 
 IP="${TB4_IP:-192.168.0.104}"

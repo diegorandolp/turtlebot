@@ -15,6 +15,7 @@ Pasos:
 Ctrl+C detiene el robot en cualquier momento.
 """
 import argparse
+import os
 import math
 import time
 
@@ -106,7 +107,7 @@ def drive(robot, distance, speed, timeout=15.0):
 
 def main():
     ap = argparse.ArgumentParser(description="Avanzar hasta un obstaculo y desplazarse a un lado")
-    ap.add_argument("ip", nargs="?", default="192.168.0.103")
+    ap.add_argument("ip", nargs="?", default=os.environ.get("TB4_IP", "192.168.0.104"))
     ap.add_argument("--undock", action="store_true", help="sacar primero el robot del dock")
     ap.add_argument("--lado", choices=["derecha", "izquierda"], default="derecha")
     ap.add_argument("--lateral", type=float, default=0.50, help="m a desplazarse hacia el lado")

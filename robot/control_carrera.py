@@ -3,12 +3,13 @@ Mando de la Tarea A desde la PC, por UDP (a traves del router), SIN hacer comput
 robot (robot/carrera.service o desplegar_carrera.sh --correr). Este programa solo manda START y espera el
 anuncio, que imprime en la terminal (y lo dice en voz alta si la PC tiene voz).
 
-    python3 robot/control_carrera.py                 # START y esperar el anuncio (robot 192.168.0.103)
-    python3 robot/control_carrera.py 192.168.0.104   # otra IP
+    python3 robot/control_carrera.py                 # START y esperar el anuncio (robot $TB4_IP o 192.168.0.104)
+    python3 robot/control_carrera.py 192.168.0.105   # otra IP
     python3 robot/control_carrera.py --solo-esperar  # no dar la salida (la da el boton 1), solo esperar el anuncio
     python3 robot/control_carrera.py --luz           # prueba: anillo verde 2 s + nota (comprueba audio/luces)
 """
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -20,7 +21,7 @@ from reconocimiento.voz import anunciar  # noqa: E402
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("ip", nargs="?", default="192.168.0.103")
+    ap.add_argument("ip", nargs="?", default=os.environ.get("TB4_IP", "192.168.0.104"))
     ap.add_argument("--solo-esperar", action="store_true")
     ap.add_argument("--luz", action="store_true")
     ap.add_argument("--espera", type=float, default=240.0, help="s maximos esperando el anuncio")
