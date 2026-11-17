@@ -101,6 +101,9 @@ class TB4Client:
         self.sock.settimeout(0.2)
         self.lock = threading.Lock()
         self._scan = self._pose = self._status = None
+        self._det = None         # (stamp, [(x0, y0, x1, y1, conf)], recibido): caras detectadas EN la camara
+        self._boton = None       # (boton, recibido): ultimo boton de la Create 3 apretado (3 = START por UDP)
+        self._textos = []        # textos repartidos por el puente (el anuncio de la carrera que corre en el robot)
         self._cmd = (0.0, 0.0)
         self._cmd_time = 0.0
         self._seq = 0
@@ -133,6 +136,14 @@ class TB4Client:
     def pose(self):
         return self._pose
 
+    def det(self, max_edad=0.5):
+        """Cajas de caras detectadas en la propia camara (robot/tb4_bridge.py --nn-topic), en fraccion 0..1 del
+        cuadro, si llegaron hace menos de `max_edad` s; None si el puente no las manda (o estan viejas)."""
+        d = self._det
+        if d is None or time.monotonic() - d[2] > max_edad:
+            return None
+        return d[1]
+
     def move(self, v, w):
         """Velocidad lineal v (m/s, + adelante) y angular w (rad/s, + izquierda).
         Llamalo en cada iteracion de tu bucle; si dejas de hacerlo el robot se detiene."""
@@ -157,6 +168,35 @@ class TB4Client:
         if img is None:
             raise RuntimeError("JPEG recibido no se pudo decodificar")
         return img
+
+    def boton(self):
+        """Ultimo boton de la Create 3 apretado (1, 2, 0 = power) y lo consume; None si ninguno desde la ultima vez.
+        Sirve para dar la salida sin PC: robot/tb4_bridge.py lo manda al apretarlo."""
+        b, self._boton = self._boton, None
+        return None if b is None else b[0]
+
+    def start(self):
+        """Da la salida a la carrera que corre EN el robot (carrera.py --go-boton): el puente lo reparte a todos
+        los clientes como boton 3. No espera respuesta."""
+        self._send(P.pack(P.START, self.token))
+
+    def decir(self, texto):
+        """Manda un texto al puente, que lo reparte a todos los clientes (asi el anuncio llega a la PC)."""
+        self._send(P.pack_texto(self.token, texto))
+
+    def textos(self):
+        """Textos recibidos desde la ultima vez: [(recibido, texto)]."""
+        with self.lock:
+            t, self._textos = self._textos, []
+        return t
+
+    def audio(self, notas, timeout=3.0):
+        """Toca notas [(hz, ms), ...] en el parlante de la Create 3 (el unico parlante del TurtleBot 4 Lite)."""
+        return self._request(lambda r: P.pack_audio(self.token, r, notas), timeout)["text"]
+
+    def luz(self, r, g, b, ms=0, timeout=3.0):
+        """Pinta el anillo de luces de la Create 3 (0..255 cada uno); r = g = b = 0 lo devuelve al sistema."""
+        return self._request(lambda r_: P.pack_light(self.token, r_, r, g, b, ms), timeout)["text"]
 
     def undock(self, timeout=30.0):
         """Saca el robot del dock (retrocede solo). Devuelve el mensaje del robot."""
@@ -247,6 +287,15 @@ class TB4Client:
         elif kind == P.ODOM:
             stamp, x, y, yaw, v, w = P.unpack_odom(payload)
             self._pose = Pose(x, y, yaw, v, w, stamp, now)
+        elif kind == P.DET:
+            stamp, cajas = P.unpack_det(payload)
+            self._det = (stamp, cajas, now)
+        elif kind == P.BUTTON:
+            _, boton = P.unpack_button(payload)
+            self._boton = (boton, now)
+        elif kind == P.TEXTO:
+            with self.lock:
+                self._textos.append((now, P.unpack_texto(payload)))
         elif kind == P.STATUS:
             _, bat, docked, flags, driver, front, rear, n = P.unpack_status(payload)
             self._status = Status(

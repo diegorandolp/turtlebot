@@ -1,0 +1,13 @@
+{
+    "model": {
+        "model_name": "face-detection-retail-0004",
+        "zoo": "intel"
+    },
+    "nn_config": {
+        "NN_family": "mobilenet",
+        "confidence_threshold": 0.5
+    },
+    "mappings": {
+        "labels": ["background", "cara"]
+    }
+}

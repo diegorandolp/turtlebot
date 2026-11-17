@@ -114,6 +114,15 @@ class Bridge(Node):
         self.create_subscription(LaserScan, "/scan", self.on_scan, qos_profile_sensor_data)
         self.create_subscription(Odometry, "/odom", self.on_odom, qos_profile_sensor_data)
         self.create_subscription(BatteryState, "/battery_state", self.on_battery, qos_profile_sensor_data)
+        if args.nn_topic:
+            # Caras detectadas EN la camara (red neuronal en el chip Myriad X de la OAK-D, configurada en el
+            # launch de la camara: ver robot/oakd_caras.md). Se reenvian a la PC como cajas en fraccion del cuadro.
+            try:
+                from vision_msgs.msg import Detection2DArray
+                self.create_subscription(Detection2DArray, args.nn_topic, self.on_det, qos_profile_sensor_data)
+                self.get_logger().info(f"Caras detectadas en la camara: {args.nn_topic}")
+            except ImportError:
+                self.get_logger().warning("vision_msgs no esta instalado: sin --nn-topic")
         self.dock_client = self.undock_client = None
         try:
             from irobot_create_msgs.action import Dock, Undock
@@ -124,6 +133,18 @@ class Bridge(Node):
             self.undock_client = ActionClient(self, Undock, "/undock")
         except ImportError:
             self.get_logger().warn("irobot_create_msgs no disponible: sin dock/undock ni estado del dock")
+        # Botones, parlante y anillo de luces de la Create 3: para correr SIN PC (salida con el boton 1,
+        # aviso de llegada con luces y notas). Ver robot/desplegar_carrera.sh.
+        self.pub_audio = self.pub_luz = None
+        self._botones = {}
+        try:
+            from irobot_create_msgs.msg import AudioNoteVector, InterfaceButtons, LightringLeds
+            self.AudioNoteVector, self.LightringLeds = AudioNoteVector, LightringLeds
+            self.create_subscription(InterfaceButtons, "/interface_buttons", self.on_buttons, qos_profile_sensor_data)
+            self.pub_audio = self.create_publisher(AudioNoteVector, "/cmd_audio", 10)
+            self.pub_luz = self.create_publisher(LightringLeds, "/cmd_lightring", 10)
+        except ImportError:
+            self.get_logger().warn("irobot_create_msgs: sin botones, audio ni luces")
 
         self.create_timer(1.0 / CONTROL_HZ, self.control_step)
         self.create_timer(1.0 / TELEMETRY_STATUS_HZ, self.send_status)
@@ -197,6 +218,18 @@ class Bridge(Node):
                     self.pending.append((kind, addr, req_id, None))
                 else:
                     self.pending.append((None, addr, req_id, "otra PC esta conduciendo"))
+            elif kind == P.START:                       # la salida por UDP: a todos (la carrera corre en el robot)
+                self.get_logger().info(f"START desde {addr[0]}")
+                self.broadcast(P.pack_button(self.token, time.time(), 3))
+            elif kind == P.TEXTO:                       # p. ej. el anuncio de la carrera: a todos (llega a la PC)
+                self.get_logger().info("Texto: " + P.unpack_texto(payload))
+                self.broadcast(P.pack_texto(self.token, P.unpack_texto(payload)))
+            elif kind == P.AUDIO:
+                req_id, notas = P.unpack_audio(payload)
+                self.pending.append((P.AUDIO, addr, req_id, notas))
+            elif kind == P.LIGHT:
+                req_id, r, g, b, ms = P.unpack_light(payload)
+                self.pending.append((P.LIGHT, addr, req_id, (r, g, b, ms)))
 
     def take_control(self, addr, now):
         """Llamar con self.lock tomado. True si addr puede conducir."""
@@ -222,6 +255,74 @@ class Bridge(Node):
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         self.broadcast(P.pack_scan(self.token, stamp, angle_min, msg.angle_increment,
                                    msg.range_min, msg.range_max, ranges))
+
+    def on_det(self, msg):
+        """vision_msgs/Detection2DArray (depthai_ros_driver: centro y tamano en pixeles del cuadro de la red,
+        o normalizados 0..1 segun la version) -> cajas (x0, y0, x1, y1, conf) en fraccion del cuadro."""
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        cajas = []
+        for d in msg.detections:
+            cx, cy, w, h = d.bbox.center.position.x, d.bbox.center.position.y, d.bbox.size_x, d.bbox.size_y
+            if max(cx, cy, w, h) > 1.5:                                  # en pixeles: pasar a fraccion
+                W, H = self.args.nn_ancho, self.args.nn_alto
+                cx, cy, w, h = cx / W, cy / H, w / W, h / H
+            conf = max((r.hypothesis.score for r in d.results), default=1.0)
+            if conf >= self.args.nn_conf:
+                cajas.append((max(0.0, cx - w / 2), max(0.0, cy - h / 2), min(1.0, cx + w / 2), min(1.0, cy + h / 2), conf))
+        self.broadcast(P.pack_det(self.token, stamp, cajas))
+
+    # ---------- Create 3: botones, parlante, luces ----------
+
+    def on_buttons(self, msg):
+        """irobot_create_msgs/InterfaceButtons: se manda BUTTON al apretar (flanco), no mientras se sostiene."""
+        stamp = time.time()
+        for num, campo in ((1, "button_1"), (2, "button_2"), (0, "button_power")):
+            pres = bool(getattr(msg, campo).is_pressed)
+            if pres and not self._botones.get(num, False):
+                self.get_logger().info(f"Boton {num} apretado")
+                self.broadcast(P.pack_button(self.token, stamp, num))
+            self._botones[num] = pres
+
+    def tocar(self, addr, req_id, notas):
+        if self.pub_audio is None:
+            self.reply(addr, req_id, False, "sin audio (irobot_create_msgs)")
+            return
+        from builtin_interfaces.msg import Duration
+        from irobot_create_msgs.msg import AudioNote
+        msg = self.AudioNoteVector()
+        msg.append = False
+        for hz, ms in notas:
+            n = AudioNote()
+            n.frequency = int(hz)
+            n.max_runtime = Duration(sec=int(ms // 1000), nanosec=int((ms % 1000) * 1_000_000))
+            msg.notes.append(n)
+        self.pub_audio.publish(msg)
+        self.reply(addr, req_id, True, f"{len(notas)} notas")
+
+    def pintar(self, addr, req_id, r, g, b, ms):
+        if self.pub_luz is None:
+            self.reply(addr, req_id, False, "sin luces (irobot_create_msgs)")
+            return
+        from irobot_create_msgs.msg import LedColor
+        msg = self.LightringLeds()
+        msg.override_system = not (r == 0 and g == 0 and b == 0)
+        msg.leds = [LedColor(red=int(r), green=int(g), blue=int(b)) for _ in range(6)]
+        self.pub_luz.publish(msg)
+        if ms and msg.override_system:                      # volver al sistema solo (timer de una vez)
+            t = []
+
+            def apagar():
+                self._apagar_luz()
+                t[0].cancel()
+            t.append(self.create_timer(ms / 1000.0, apagar))
+        self.reply(addr, req_id, True, "ok")
+
+    def _apagar_luz(self):
+        from irobot_create_msgs.msg import LedColor
+        msg = self.LightringLeds()
+        msg.override_system = False
+        msg.leds = [LedColor() for _ in range(6)]
+        self.pub_luz.publish(msg)
 
     def on_odom(self, msg):
         p, q, t = msg.pose.pose.position, msg.pose.pose.orientation, msg.twist.twist
@@ -272,6 +373,10 @@ class Bridge(Node):
                 self.start_photo(addr, req_id, *extra)
             elif kind in (P.DOCK, P.UNDOCK):
                 self.start_dock(kind, addr, req_id)
+            elif kind == P.AUDIO:
+                self.tocar(addr, req_id, extra)
+            elif kind == P.LIGHT:
+                self.pintar(addr, req_id, *extra)
             else:
                 self.reply(addr, req_id, False, extra)
         self.check_photo_timeout()
@@ -409,6 +514,11 @@ def main():
     ap.add_argument("--hd-topic", default="/oakd/rgb/image_raw",
                     help="camara de las fotos HD (Image, o CompressedImage si termina en /compressed)")
     ap.add_argument("--hd-width", type=int, default=1280, help="ancho maximo de las fotos HD (0 = sin achicar)")
+    ap.add_argument("--nn-topic", default="", help="caras detectadas en la camara (vision_msgs/Detection2DArray, "
+                    "p. ej. /oakd/nn/detections); vacio = no usar. Ver robot/oakd_caras.md")
+    ap.add_argument("--nn-ancho", type=int, default=300, help="ancho del cuadro de la red (si las cajas vienen en px)")
+    ap.add_argument("--nn-alto", type=int, default=300, help="alto del cuadro de la red (si las cajas vienen en px)")
+    ap.add_argument("--nn-conf", type=float, default=0.5, help="confianza minima de una caja")
     ap.add_argument("--foto-mantener", type=float, default=3.0,
                     help="s que la suscripcion a la camara sigue abierta despues del ultimo pedido")
     args = ap.parse_args()

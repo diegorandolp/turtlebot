@@ -135,3 +135,45 @@ class SafetyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DetTests(unittest.TestCase):
+    """DET: caras detectadas en la camara (robot -> PC)."""
+
+    def test_det_ida_y_vuelta(self):
+        cajas = [(0.1, 0.2, 0.3, 0.5, 0.9), (0.0, 0.0, 1.0, 1.0, 0.5)]
+        kind, payload = P.unpack(P.pack_det(TOKEN, 12.5, cajas), TOKEN)
+        self.assertEqual(kind, P.DET)
+        stamp, out = P.unpack_det(payload)
+        self.assertAlmostEqual(stamp, 12.5)
+        self.assertEqual(len(out), 2)
+        for a, b in zip(cajas, out):
+            for u, v in zip(a, b):
+                self.assertAlmostEqual(u, v, places=5)
+        self.assertEqual(P.unpack_det(P.unpack(P.pack_det(TOKEN, 1.0, []), TOKEN)[1])[1], [])
+        with self.assertRaises(P.ProtocolError):
+            P.unpack_det(P.unpack(P.pack_det(TOKEN, 1.0, cajas), TOKEN)[1][:-3])
+
+
+class Create3Tests(unittest.TestCase):
+    """AUDIO / LIGHT (PC -> robot) y BUTTON (robot -> PC): correr sin PC."""
+
+    def test_audio(self):
+        notas = [(880, 150), (0, 100), (1047, 400)]
+        kind, payload = P.unpack(P.pack_audio(TOKEN, 7, notas), TOKEN)
+        self.assertEqual(kind, P.AUDIO)
+        self.assertEqual(P.unpack_audio(payload), (7, notas))
+
+    def test_light_y_button(self):
+        kind, payload = P.unpack(P.pack_light(TOKEN, 3, 0, 255, 0, 20000), TOKEN)
+        self.assertEqual((kind, P.unpack_light(payload)), (P.LIGHT, (3, 0, 255, 0, 20000)))
+        kind, payload = P.unpack(P.pack_button(TOKEN, 5.5, 1), TOKEN)
+        self.assertEqual(kind, P.BUTTON)
+        self.assertEqual(P.unpack_button(payload)[1], 1)
+
+    def test_start_y_texto(self):
+        kind, payload = P.unpack(P.pack(P.START, TOKEN), TOKEN)
+        self.assertEqual((kind, payload), (P.START, b""))
+        kind, payload = P.unpack(P.pack_texto(TOKEN, "ANUNCIO: La palabra es ñandú_7"), TOKEN)
+        self.assertEqual(kind, P.TEXTO)
+        self.assertEqual(P.unpack_texto(payload), "ANUNCIO: La palabra es ñandú_7")

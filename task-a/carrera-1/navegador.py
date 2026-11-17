@@ -92,16 +92,45 @@ PUENTE_PARA, PUENTE_SUELTA = 0.28, 0.38   # m: los umbrales del freno del puente
 REVERSA_V, REVERSA_S = -0.12, 1.2         # retroceso para salir de un atasco con el frente bloqueado
 
 
+_ARCOS = {}
+
+
 def arcos(vmax, wmax):
-    """-> v, w (K,) y la trayectoria x, y, th (K, pasos) de cada arco, en el marco del robot."""
-    V, W = np.meshgrid(np.linspace(0.0, vmax, 6), np.linspace(-wmax, wmax, 19), indexing="ij")
-    v, w = V.ravel(), W.ravel()
-    th = w[:, None] * T_ARCO[None, :]
-    recto = np.abs(w[:, None]) < 1e-6
-    wn = np.where(recto, 1.0, w[:, None])
-    x = np.where(recto, v[:, None] * T_ARCO[None, :], v[:, None] / wn * np.sin(th))
-    y = np.where(recto, 0.0, v[:, None] / wn * (1 - np.cos(th)))
-    return v, w, x, y, th
+    """-> v, w (K,) y la trayectoria x, y, th (K, pasos) de cada arco, en el marco del robot (float32, y
+    tambien cos/sin de th), en cache por (vmax, wmax): se llama 20 veces por segundo con los mismos valores."""
+    k = (round(vmax, 4), round(wmax, 4))
+    a = _ARCOS.get(k)
+    if a is None:
+        V, W = np.meshgrid(np.linspace(0.0, vmax, 6), np.linspace(-wmax, wmax, 19), indexing="ij")
+        v, w = V.ravel(), W.ravel()
+        th = w[:, None] * T_ARCO[None, :]
+        recto = np.abs(w[:, None]) < 1e-6
+        wn = np.where(recto, 1.0, w[:, None])
+        x = np.where(recto, v[:, None] * T_ARCO[None, :], v[:, None] / wn * np.sin(th))
+        y = np.where(recto, 0.0, v[:, None] / wn * (1 - np.cos(th)))
+        a = tuple(np.ascontiguousarray(z, dtype=np.float32) for z in (v, w, x, y, th, np.cos(th), np.sin(th)))
+        if len(_ARCOS) > 32:
+            _ARCOS.clear()
+        _ARCOS[k] = a
+    return a
+
+
+def _reducir_puntos(px, py, max_m=1.0, paso_deg=1.5):
+    """Los puntos del LiDAR a menos de `max_m`, quedandose con el MAS CERCANO de cada sector de `paso_deg`:
+    de 720 puntos quedan <= 240, y el que se descarta esta mas lejos que el que se conserva en casi la misma
+    direccion (el margen de `radio` sobre el radio fisico cubre la diferencia). Es lo que hace que la
+    ventana dinamica cueste 3 ms y no 12 en una PC (en la Raspberry, x4)."""
+    d = np.hypot(px, py)
+    cerca = d < max_m
+    if not cerca.any():
+        return px[:0].astype(np.float32), py[:0].astype(np.float32)
+    px, py, d = px[cerca], py[cerca], d[cerca]
+    sector = np.floor((np.arctan2(py, px) + np.pi) / math.radians(paso_deg)).astype(np.int32)
+    orden = np.lexsort((d, sector))                                 # por sector y, dentro, por distancia
+    primero = np.ones(len(orden), bool)
+    primero[1:] = sector[orden][1:] != sector[orden][:-1]
+    sel = orden[primero]
+    return px[sel].astype(np.float32), py[sel].astype(np.float32)
 
 
 def ventana_dinamica(px, py, h_rel, vmax, wmax, radio=0.20, bloqueado=False):
@@ -112,22 +141,22 @@ def ventana_dinamica(px, py, h_rel, vmax, wmax, radio=0.20, bloqueado=False):
     mas, sin bajar nunca de RADIO_FISICO: asi puede salir en vez de quedarse girando.
     `bloqueado` = el freno del puente esta puesto: no lo suelta hasta tener PUENTE_SUELTA libres, asi que
     un arco que avance antes de eso no sirve (el puente lo deja en v = 0 y el robot se queda quieto)."""
-    v, w, x, y, th = arcos(vmax, wmax)
-    d_pts = np.hypot(px, py)
-    d0 = float(d_pts.min()) if d_pts.size else 9.0
+    v, w, x, y, th, c, s = arcos(vmax, wmax)
+    d0 = float(np.hypot(px, py).min()) if px.size else 9.0
     if d0 < radio:
         radio = max(RADIO_FISICO, d0 - 0.005)
-    cerca = d_pts < 1.0
-    px, py = px[cerca], py[cerca]
+    px, py = _reducir_puntos(px, py)
     d_fin = np.full(len(v), 9.0)
     if px.size:
-        dx, dy = px[None, None, :] - x[..., None], py[None, None, :] - y[..., None]      # (K, pasos, M)
-        dd = np.sqrt(dx ** 2 + dy ** 2)
-        dmin, d_fin = dd.min(axis=(1, 2)), dd[:, -1, :].min(axis=1)
+        dx, dy = px[None, None, :] - x[..., None], py[None, None, :] - y[..., None]      # (K, pasos, M) float32
+        dd2 = dx * dx
+        dd2 += dy * dy                                                                   # distancias al cuadrado
+        dmin, d_fin = np.sqrt(dd2.min(axis=(1, 2))), np.sqrt(dd2[:, -1, :].min(axis=1))
         # la regla del puente en cada paso del arco: nada en su pasillo (+-0.20 m) a menos de FRENO m por
         # delante, o frena en seco (y para soltar pide 0.38 m: si ya esta cerca, al empezar se pide eso)
-        c, s = np.cos(th)[..., None], np.sin(th)[..., None]
-        delante, lado = c * dx + s * dy, -s * dx + c * dy
+        delante = c[..., None] * dx + s[..., None] * dy
+        lado = c[..., None] * dy
+        lado -= s[..., None] * dx
         en_pasillo = (delante > 0) & (np.abs(lado) < 0.20)
         frena = (en_pasillo & (delante < FRENO)).any(axis=(1, 2))
         if d0 < 0.25 or bloqueado:

@@ -159,7 +159,7 @@ class Geometria:
 class Camara:
     """Camara pinhole horizontal a CAM_Z del suelo. hfov en grados (preview de la OAK-D ~ 40)."""
 
-    def __init__(self, geo, ancho=250, alto=250, hfov=40.0, capas=6, semilla=0):
+    def __init__(self, geo, ancho=250, alto=250, hfov=42.0, capas=6, semilla=0):
         self.geo, self.W, self.H, self.K = geo, ancho, alto, capas
         self.f = (ancho / 2) / math.tan(math.radians(hfov) / 2)
         self.cx, self.cy = (ancho - 1) / 2, (alto - 1) / 2
@@ -290,8 +290,8 @@ class Camara:
 class SimRobot:
     """Mismo API que TB4Client, con tiempo simulado (advance)."""
 
-    def __init__(self, mundo, hfov=40.0, odom_ruido=0.01, odom_sesgo=0.0, semilla=1, camara_ok=True,
-                 acel=1.0, acel_w=4.0, foto_hd=None, freno=True):
+    def __init__(self, mundo, hfov=42.0, odom_ruido=0.01, odom_sesgo=0.0, semilla=1, camara_ok=True,
+                 acel=1.0, acel_w=4.0, foto_hd=None, freno=True, cam_nn=False):
         """foto_hd = (ancho, alto, hfov) de la camara grande (photo(hd=True)); freno=False si delante va el
         puente real (robot_ros_sim.py), que ya aplica el freno."""
         self.freno = freno
@@ -299,6 +299,11 @@ class SimRobot:
         self.geo = Geometria(mundo)
         self.cam = Camara(self.geo, hfov=hfov, semilla=mundo.semilla)
         self.cam_hd = Camara(self.geo, *foto_hd, semilla=mundo.semilla) if foto_hd else None
+        self.cam_nn, self._ultima_foto = None, None
+        if cam_nn:                                   # imita la red de caras del chip de la OAK-D (ver det())
+            import cv2
+            from reconocimiento.rostros import YUNET
+            self.cam_nn = cv2.FaceDetectorYN.create(str(YUNET), "", (160, 160), 0.5, 0.3, 20)
         self.camara_ok = camara_ok
         self.wx, self.wy, self.wth = mundo.inicio
         self.ox = self.oy = self.oth = 0.0
@@ -367,7 +372,28 @@ class SimRobot:
             raise RuntimeError("sin imagen de la camara (simulada caida)")
         self.fotos += 1
         cam = self.cam_hd if (hd and self.cam_hd is not None) else self.cam
-        return cam.foto(self.wx, self.wy, self.wth, quality)
+        img = cam.foto(self.wx, self.wy, self.wth, quality)
+        if self.cam_nn is not None:
+            self._ultima_foto = img
+        return img
+
+    def det(self, max_edad=0.5):
+        """Como TB4Client.det(): cajas de caras detectadas 'en la camara'. Aqui se imita el chip de la OAK-D con
+        un detector tosco sobre la ultima foto achicada (activar con cam_nn=True / carrera.py --cam-nn). None si
+        no esta activado."""
+        if self.cam_nn is None or self._ultima_foto is None:
+            return None
+        import cv2
+        img = self._ultima_foto
+        H, W = img.shape[:2]
+        s = 160.0 / max(H, W)
+        im = cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+        self.cam_nn.setInputSize((im.shape[1], im.shape[0]))
+        _, f = self.cam_nn.detect(im)
+        if f is None:
+            return []
+        return [(float(r[0]) / s / W, float(r[1]) / s / H, float(r[0] + r[2]) / s / W, float(r[1] + r[3]) / s / H,
+                 float(r[14])) for r in f]
 
     # ---- simulacion ----
     def verdad(self):

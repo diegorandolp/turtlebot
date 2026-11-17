@@ -315,3 +315,50 @@ class Laberinto(unittest.TestCase):
             self.assertLess(m.inicio[0], 0.8)                                          # A en la columna izquierda
             self.assertGreaterEqual(sum("flecha" in c.tipo for c in m.carteles), 2)   # senales en los giros
         self.assertEqual(construir("laberinto:1:6:5:0.7+6").nombre.split("+")[0], "laberinto:1:6:5:0.7")
+
+
+class CarasEnLaCamara(unittest.TestCase):
+    """Deteccion de caras en el chip de la OAK-D: YuNet solo en los recortes (robot/oakd_caras.md)."""
+
+    def test_en_cajas_da_la_misma_cara_y_puntos(self):
+        from simulador import SimRobot
+        from reconocimiento import Reconocedor
+        m = construir("croquis+6")
+        r = SimRobot(m, hfov=42.0, foto_hd=(1280, 720, 69.0))
+        _, _, (fx, fy) = m.rostros[0]
+        r.wx, r.wy, r.wth = fx - 0.8, fy, 0.0
+        rec = Reconocedor(modelo="mbf")
+        for img in (r.photo(), r.photo(hd=True)):
+            H, W = img.shape[:2]
+            full = rec.det(img)
+            self.assertGreaterEqual(len(full), 1)
+            cajas = [(c.caja[0] / W, c.caja[1] / H, (c.caja[0] + c.caja[2]) / W, (c.caja[1] + c.caja[3]) / H, c.score)
+                     for c in full]
+            roi = rec.det.en_cajas(img, cajas)
+            self.assertEqual(len(roi), len(full))
+            for a, b in zip(full, roi):
+                self.assertLess(float(np.abs(a.puntos - b.puntos).max()), 0.25 * a.ancho)   # mismos 5 puntos
+                self.assertEqual(rec.resultado(img, a).nombre, rec.resultado(img, b).nombre)
+        self.assertEqual(rec.det.en_cajas(img, []), [])
+
+    def test_procesar_con_cajas_vacias_revisa_entera_una_vez_por_segundo(self):
+        from percepcion import Percepcion
+        from reconocimiento import Reconocedor
+        from flechas import DetectorFlechas
+        m = construir("croquis+6")
+        from simulador import SimRobot
+        r = SimRobot(m, hfov=42.0)
+        _, _, (fx, fy) = m.rostros[0]
+        r.wx, r.wy, r.wth = fx - 0.8, fy, 0.0
+        img = r.photo()
+        per = Percepcion(Reconocedor(modelo="mbf"), DetectorFlechas(forma=True), hfov=42.0)
+        pose, scan = (r.wx, r.wy, r.wth), r.scan()
+        caras, _, _ = per.procesar(img, pose, scan, 10.0, cajas=[])       # la camara "no vio" nada: revisa entera
+        self.assertEqual(len(caras), 1)
+        caras, _, _ = per.procesar(img, pose, scan, 10.3, cajas=[])       # hace 0.3 s que reviso: confia en la camara
+        self.assertEqual(len(caras), 0)
+        c = per.rec.det(img)[0]
+        H, W = img.shape[:2]
+        caja = (c.caja[0] / W, c.caja[1] / H, (c.caja[0] + c.caja[2]) / W, (c.caja[1] + c.caja[3]) / H, 0.9)
+        caras, _, _ = per.procesar(img, pose, scan, 10.4, cajas=[caja])  # con la caja de la camara
+        self.assertEqual(len(caras), 1)

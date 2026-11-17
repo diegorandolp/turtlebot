@@ -249,6 +249,26 @@ def ventana(engine, nav, pos, ultima, robot, sim, t_rel, camtxt):
     return out
 
 
+def senal_robot(robot, que):
+    """Aviso con el hardware de la Create 3 (robot real; en el simulador no hace nada): anillo de luces y notas
+    en su parlante. 'salida' = azul + nota corta; 'hecho' = verde + melodia subiendo; 'fallo' = rojo + 2 graves.
+    Es la unica forma de avisar SIN PC: el TurtleBot 4 Lite no tiene pantalla y la Raspberry no tiene parlante."""
+    if not hasattr(robot, "audio"):
+        return
+    try:
+        if que == "salida":
+            robot.luz(0, 0, 255, 2000)
+            robot.audio([(880, 150)])
+        elif que == "hecho":
+            robot.luz(0, 255, 0, 20000)
+            robot.audio([(523, 150), (659, 150), (784, 150), (1047, 400)])
+        else:
+            robot.luz(255, 0, 0, 20000)
+            robot.audio([(220, 400), (0, 100), (220, 400)])
+    except Exception as e:                                       # noqa: BLE001  (puente viejo, sin irobot_create_msgs)
+        print("[aviso] luces/audio del robot:", e, flush=True)
+
+
 def anuncio(nav):
     """Lo que se dice al llegar a A: la palabra del QR (reglas del laboratorio) o, sin QR, el nombre."""
     if nav.palabra:
@@ -310,6 +330,7 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
         grab = Grabador(destino, fps=args.video_fps, bloquear=sim, h264=not args.video_sin_h264)
     if args.go:
         nav.empezar(t0, 0.0)
+    t_go_archivo = 0.0
     try:
         while True:
             now = reloj()
@@ -353,7 +374,8 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
                     if ver:
                         caras, flechas, qrs = [], [], []
                     else:
-                        caras, flechas, qrs = per.procesar(img, pos, scan, now, sens["w"], pos_scan[2], leer_qr=leer_qr)
+                        caras, flechas, qrs = per.procesar(img, pos, scan, now, sens["w"], pos_scan[2], leer_qr=leer_qr,
+                                                           cajas=robot.det() if args.cam_nn else None)
                     pendientes.append((now + args.cam_latencia, now, img, caras, flechas, qrs))
                     t_cam = now + (0.3 if ver else (max(args.cam_periodo, 0.3) if hd else args.cam_periodo))
                 listos = [p[1:] for p in pendientes if p[0] <= now]
@@ -399,6 +421,11 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
                 print(f"\n==== {texto} ====\n", flush=True)
                 if not args.mudo:                                        # la voz no lee bien "_" ni "-"
                     anunciar(texto.replace("_", " ").replace("-", " "), imprimir=False)
+                senal_robot(robot, "hecho" if (nav.palabra or nav.nombre) else "fallo")
+                if hasattr(robot, "decir"):                              # a todas las PC conectadas al puente
+                    robot.decir(f"ANUNCIO: {texto}")
+                if args.resultado_archivo:                               # en el robot: queda escrito aunque no haya PC
+                    Path(args.resultado_archivo).write_text(texto + "\n", encoding="utf-8")
             # ---- ventana (y video) ----
             grabar = grab is not None and grab.toca(now)
             if gui or grabar or (args.png and nav.estado == HECHO):
@@ -420,6 +447,23 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
                     nav.empezar(now, pos[2])
             elif not sim:
                 time.sleep(0.02)
+            if nav.estado == PAUSA and now >= t_go_archivo:
+                t_go_archivo = now + 0.3
+                dar_salida = False
+                if args.go_archivo and Path(args.go_archivo).exists():     # sin ventana (robot): un archivo
+                    Path(args.go_archivo).unlink()
+                    dar_salida = True
+                if args.go_boton and hasattr(robot, "boton") and robot.boton() in (1, 3):
+                    dar_salida = True                                    # el boton 1 de la Create 3, o START por UDP
+                if dar_salida:
+                    if args.buscar_archivo and Path(args.buscar_archivo).exists():
+                        # a quien buscar se decide en la competencia: se lee del archivo al dar la salida
+                        quien = Path(args.buscar_archivo).read_text(encoding="utf-8").strip()
+                        if quien:
+                            nav.cfg.buscar = nombre_en_galeria(quien, rec.nombres)
+                    nav.empezar(now, pos[2])
+                    senal_robot(robot, "salida")
+                    print(f"[go] salida dada; busco a {nav.cfg.buscar or '(la unica foto)'}", flush=True)
             if t_hecho is not None and (not gui or sim) and now - t_hecho > 1.0:
                 break
             if nav.t_inicio is not None and now - nav.t_inicio > max_t:
@@ -497,6 +541,13 @@ def parse(argv=None):
     ap.add_argument("--persona", default=None, help="(--sim) quien esta en la foto de B (defecto: al azar)")
     ap.add_argument("--no-gui", action="store_true", help="sin ventana (con el robot real solo se para con Ctrl+C)")
     ap.add_argument("--go", action="store_true", help="empezar sin esperar la tecla g")
+    ap.add_argument("--go-archivo", default=None, metavar="RUTA",
+                    help="sin ventana (en el robot): empezar cuando aparezca este archivo (robot/desplegar_carrera.sh --go)")
+    ap.add_argument("--go-boton", action="store_true",
+                    help="empezar al apretar el boton 1 de la Create 3 o al recibir START por UDP (robot/control_carrera.py)")
+    ap.add_argument("--buscar-archivo", default=None, metavar="RUTA",
+                    help="leer a quien buscar de este archivo al dar la salida (sin PC: se escribe antes de la carrera)")
+    ap.add_argument("--resultado-archivo", default=None, metavar="RUTA", help="escribir el anuncio en este archivo al terminar")
     ap.add_argument("--undock", action="store_true", help="sacar del dock al empezar (retrocede solo)")
     ap.add_argument("--vel", type=float, default=0.30, help="velocidad maxima en m/s (defecto 0.30; el robot llega a 0.31)")
     ap.add_argument("--temprano", action="store_true", help="volver apenas se sabe quien es (sin terminar de acercarse a B)")
@@ -505,12 +556,17 @@ def parse(argv=None):
     ap.add_argument("--flechas-solo-negras", action="store_true",
                     help="flechas solo de tinta oscura (por defecto cuenta la FORMA, de cualquier color)")
     ap.add_argument("--modelo", default="auto", help="reconocimiento: auto (r50 si esta instalado, si no mbf) | mbf | r50")
-    ap.add_argument("--hfov", type=float, default=40.0, help="campo de vision horizontal de la preview 250x250, en grados")
+    # OAK-D Lite (TurtleBot 4 Lite): color IMX214, HFOV 69 grados (hoja de datos de Luxonis). La HD 1280x720 conserva
+    # ese ancho; la preview 250x250 es el recorte cuadrado central de la 16:9: 2*atan(tan(34.5)*720/1280) = 42 grados.
+    # Son valores de catalogo: medirlos en el laboratorio (probar_vision.py frente a una regla a 1 m).
+    ap.add_argument("--hfov", type=float, default=42.0, help="campo de vision horizontal de la preview 250x250, en grados")
     ap.add_argument("--hd", action="store_true",
                     help="fotos HD 1280x720: ve la cara y las flechas ~3 veces mas lejos (camara con camara_rgb.sh --hd)")
-    ap.add_argument("--hfov-hd", type=float, default=66.0, help="campo de vision horizontal de la foto HD, en grados")
+    ap.add_argument("--hfov-hd", type=float, default=69.0, help="campo de vision horizontal de la foto HD, en grados")
     ap.add_argument("--engine", choices=("auto", "breezy", "odom"), default="odom", help="mapa: odometria (defecto) o BreezySLAM")
     ap.add_argument("--max-t", type=float, default=180.0, help="s maximos de la corrida (el limite del profe: 3 min)")
+    ap.add_argument("--cam-nn", action="store_true",
+                    help="(--sim) imitar la deteccion de caras EN la camara (chip de la OAK-D): YuNet solo en recortes")
     ap.add_argument("--cam-periodo", type=float, default=None, help="(--sim) s entre fotos (defecto 0.15, con --hd 0.3)")
     ap.add_argument("--cam-latencia", type=float, default=0.15, help="(--sim) s de retraso de cada foto")
     ap.add_argument("--camara-caida", action="store_true", help="(--sim) la camara no da imagenes")
@@ -546,7 +602,7 @@ def crear_sim(args):
     hd = args.hd or bool(mundo.qr and not args.qr_sin_hd)                # con QR: la camara HD existe
     robot = SimRobot(mundo, hfov=args.hfov, camara_ok=not args.camara_caida,
                      foto_hd=(1280, 720, args.hfov_hd) if hd else None,
-                     odom_ruido=args.odom_ruido, odom_sesgo=args.odom_sesgo)
+                     odom_ruido=args.odom_ruido, odom_sesgo=args.odom_sesgo, cam_nn=args.cam_nn)
     return mundo, robot
 
 

@@ -97,6 +97,40 @@ class Detector:
                  for r in f]
         return sorted(caras, key=lambda c: -c.ancho)
 
+    def en_cajas(self, img, cajas, margen=0.6, lado=224):
+        """YuNet solo en los recortes alrededor de `cajas` ((x0, y0, x1, y1) en fraccion 0..1 del cuadro), por
+        ejemplo las que detecta la propia camara OAK-D en su chip. Cada recorte (la caja + `margen` de su tamano
+        por lado) se escala a ~`lado` px: 1-3 ms por cara en vez de 17 ms la imagen entera, y los 5 puntos de la
+        cara (que ArcFace necesita) salen de YuNet igual que siempre. Devuelve Cara en coordenadas de `img`."""
+        H, W = img.shape[:2]
+        out = []
+        for (x0, y0, x1, y1, *_) in cajas:
+            bw, bh = (x1 - x0) * W, (y1 - y0) * H
+            if bw < 4 or bh < 4:
+                continue
+            X0, Y0 = int(max(0, x0 * W - margen * bw)), int(max(0, y0 * H - margen * bh))
+            X1, Y1 = int(min(W, x1 * W + margen * bw)), int(min(H, y1 * H + margen * bh))
+            rec = img[Y0:Y1, X0:X1]
+            if rec.size == 0:
+                continue
+            s = lado / max(rec.shape[:2])
+            im = cv2.resize(rec, None, fx=s, fy=s, interpolation=cv2.INTER_AREA if s < 1 else cv2.INTER_CUBIC)
+            self.det.setInputSize((im.shape[1], im.shape[0]))
+            _, f = self.det.detect(im)
+            if f is None:
+                continue
+            r = max(f, key=lambda r: r[2] * r[3])                        # la mas grande del recorte
+            caja = (float(r[0]) / s + X0, float(r[1]) / s + Y0, float(r[2]) / s, float(r[3]) / s)
+            pts = r[4:14].reshape(5, 2).astype(np.float32) / s + np.array([X0, Y0], np.float32)
+            out.append(Cara(caja, pts, float(r[14])))
+        # dos cajas de la camara sobre la misma cara -> una sola
+        unicas = []
+        for c in sorted(out, key=lambda c: -c.ancho):
+            cx, cy = c.centro
+            if all(abs(cx - u.centro[0]) > 0.5 * u.ancho or abs(cy - u.centro[1]) > 0.5 * u.ancho for u in unicas):
+                unicas.append(c)
+        return unicas
+
 
 def alinear(img, cara, size=112):
     """Recorte 112x112 de la cara, girado y escalado para que los 5 puntos caigan en la plantilla."""

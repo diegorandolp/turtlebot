@@ -49,8 +49,9 @@ def distancia_lidar(scan, rumbo, ancho=math.radians(2.5)):
 
 
 class Percepcion:
-    def __init__(self, reconocedor, det_flechas, hfov=40.0, min_px_reconocer=10, cara_m=0.11, flecha_m=0.14,
+    def __init__(self, reconocedor, det_flechas, hfov=42.0, min_px_reconocer=10, cara_m=0.11, flecha_m=0.14,
                  hfov_hd=None, qr_m=0.10, max_caras=3):
+        self._t_completo = -1e9       # ultima vez que YuNet reviso la imagen entera (con cajas de la camara)
         self.rec, self.det_fl = reconocedor, det_flechas
         self.hfov = math.radians(hfov)
         self.hfov_hd = math.radians(hfov_hd) if hfov_hd else self.hfov   # fotos HD (16:9): otro campo de vision
@@ -76,16 +77,25 @@ class Percepcion:
         x, y, th = pose
         return rumbo, d, (x + d * math.cos(th + rumbo), y + d * math.sin(th + rumbo))
 
-    def procesar(self, img, pose, scan, t, w=0.0, th_scan=None, leer_qr=False):
+    def procesar(self, img, pose, scan, t, w=0.0, th_scan=None, leer_qr=False, cajas=None):
         """pose = (x, y, yaw) al tomar la foto; th_scan = rumbo cuando se tomo `scan`.
         `w`: velocidad de giro (rad/s) al tomar la foto. Girando rapido las posiciones son poco
         fiables (se marcan). `leer_qr`: buscar tambien los QR (cuesta: solo frente a la meta).
+        `cajas`: caras que la propia camara ya detecto (fraccion 0..1 del cuadro; robot/oakd_caras.md). Con
+        ellas YuNet corre solo en esos recortes (1-3 ms por cara) y, si la camara no vio ninguna, la imagen
+        entera se revisa solo una vez por segundo por si a la camara se le escapa una cara chica. None = sin
+        ayuda de la camara: YuNet en toda la imagen, como siempre.
         -> (caras, flechas, qrs)"""
         H, W = img.shape[:2]
         dth = 0.0 if th_scan is None else math.atan2(math.sin(pose[2] - th_scan), math.cos(pose[2] - th_scan))
         girando = abs(w) > 0.6
         caras, flechas = [], []
-        for c in self.rec.det(img)[:self.max_caras]:
+        if cajas is None or (not cajas and t - self._t_completo > 1.0):
+            self._t_completo = t
+            detectadas = self.rec.det(img)
+        else:
+            detectadas = self.rec.det.en_cajas(img, cajas) if cajas else []
+        for c in detectadas[:self.max_caras]:
             if c.score < 0.7:
                 continue
             u, _ = c.centro
@@ -266,7 +276,9 @@ class CamaraHilo:
                 caras, flechas, qrs = [], [], []
                 time.sleep(0.25)                          # ~3 fotos/s alcanzan para ver
             else:
-                caras, flechas, qrs = self.per.procesar(img, pose, scan, t, w, th_scan, leer_qr=self.qr)
+                cajas = self.robot.det() if hasattr(self.robot, "det") else None    # caras detectadas en la camara
+                caras, flechas, qrs = self.per.procesar(img, pose, scan, t, w, th_scan, leer_qr=self.qr,
+                                                        cajas=cajas)
             with self.lock:
                 self.resultados.append((t, img, caras, flechas, qrs))
                 self.ultima_img = (img, caras, flechas)
