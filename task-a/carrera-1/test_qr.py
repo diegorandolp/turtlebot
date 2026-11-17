@@ -1,6 +1,5 @@
 """Pruebas de las reglas del laboratorio (sin robot): varias fotos en la meta, cada una con un QR en una
 esquina de abajo; buscar a una persona, leer SU QR y anunciar la palabra."""
-import math
 import sys
 import unittest
 from pathlib import Path
@@ -128,6 +127,52 @@ class Candidatas(unittest.TestCase):
             nav.ver_cara(0.1 * k, cara(0.1 * k, (2.0, 0.0), "Ana Uno"), 1.0)
         self.assertEqual(nav.estado, IDA)
         self.assertEqual(len(nav._mirar), 3)                        # izquierda, derecha y de vuelta
+
+
+class Robustez(unittest.TestCase):
+    def test_buscada_perdida_no_hace_bucle(self):
+        """Si la buscada no se encuentra donde se la vio, se deja de lado un rato: una cara cualquiera no
+        la vuelve a elegir enseguida (antes: ACERCAR -> IDA en cada foto)."""
+        nav = navegador()
+        for k in range(4):
+            nav.ver_cara(0.1 * k, cara(0.1 * k, (2.0, 0.45), "Caro Tres"), 1.0)
+        self.assertEqual(nav.estado, ACERCAR)
+        nav.obj.t_ignorar = 100.0                                    # lo que hace _acercar tras 30 s sin verla
+        nav.estado = IDA
+        nav.ver_cara(50.0, cara(50.0, (0.0, 3.0), "Ana Uno", px=12), 1.0)   # otra cara lejos
+        self.assertEqual(nav.estado, IDA)
+        nav.ver_cara(51.0, cara(51.0, (2.0, 0.45), "Caro Tres"), 1.0)      # la vuelve a ver: vale otra vez
+        self.assertEqual(nav.estado, ACERCAR)
+
+    def test_camara_sigue_con_preview_si_la_hd_no_llega(self):
+        import time
+        from percepcion import CamaraHilo
+
+        class Robot:
+            def __init__(self):
+                self.pedidos = []
+
+            def photo(self, timeout=2.0, hd=False):
+                self.pedidos.append(hd)
+                if hd:
+                    raise TimeoutError("sin HD")
+                return np.zeros((250, 250, 3), np.uint8)
+
+        class Per:
+            def procesar(self, *a, **k):
+                return [], [], []
+
+        r = Robot()
+        cam = CamaraHilo(r, Per(), lambda: ((0.0, 0.0, 0.0), None, 0.0, 0.0))
+        cam.qr, cam.hd_qr = True, True
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 3.0 and len(cam.recoger()) < 1:
+            time.sleep(0.02)
+        time.sleep(0.2)
+        cam.close()
+        self.assertGreaterEqual(cam.fotos, 3)                        # nunca se queda sin fotos
+        self.assertEqual(r.pedidos.count(True), 2)                   # dos intentos HD y despues solo preview
+        self.assertIn("HD", cam.ultimo_error)
 
 
 class AceptarQR(unittest.TestCase):

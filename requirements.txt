@@ -1,3 +1,5 @@
 # PC del proyecto (no hace falta ROS). Python 3.10+
 numpy
 opencv-python>=4.8      # FaceDetectorYN y cv2.dnn con ONNX (reconocimiento facial)
+# Recomendado para la Tarea A con QR: opencv-contrib-python en vez de opencv-python (incluye todo y suma el
+# lector de QR de WeChat, que lee desde mas lejos): pip uninstall -y opencv-python && pip install opencv-contrib-python

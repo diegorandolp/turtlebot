@@ -50,11 +50,12 @@ def distancia_lidar(scan, rumbo, ancho=math.radians(2.5)):
 
 class Percepcion:
     def __init__(self, reconocedor, det_flechas, hfov=40.0, min_px_reconocer=10, cara_m=0.11, flecha_m=0.14,
-                 hfov_hd=None, qr_m=0.10):
+                 hfov_hd=None, qr_m=0.10, max_caras=3):
         self.rec, self.det_fl = reconocedor, det_flechas
         self.hfov = math.radians(hfov)
         self.hfov_hd = math.radians(hfov_hd) if hfov_hd else self.hfov   # fotos HD (16:9): otro campo de vision
         self.qr_m = qr_m
+        self.max_caras = max_caras                           # 6 con --buscar: la meta tiene varias fotos en fila
         self.min_px = min_px_reconocer
         self.cara_m, self.flecha_m = cara_m, flecha_m     # tamanos supuestos, solo si el LiDAR no da distancia
 
@@ -84,7 +85,7 @@ class Percepcion:
         dth = 0.0 if th_scan is None else math.atan2(math.sin(pose[2] - th_scan), math.cos(pose[2] - th_scan))
         girando = abs(w) > 0.6
         caras, flechas = [], []
-        for c in self.rec.det(img)[:3]:
+        for c in self.rec.det(img)[:self.max_caras]:
             if c.score < 0.7:
                 continue
             u, _ = c.centro
@@ -101,7 +102,7 @@ class Percepcion:
             rumbo, d, xy = self._ubicar(u, W, f.lado, self.flecha_m, pose, scan, dth)
             flechas.append(Obs("flecha", t, rumbo, d, xy, f.lado, f.caja, dir=f.dir, girando=girando))
         qrs = []
-        if leer_qr:
+        if leer_qr and cajas:                             # un QR sin cara al lado no se usa (ver Carrera.ver_qr)
             for q in buscar_qrs(img, cajas):
                 u = q.caja[0] + q.caja[2] / 2
                 rumbo, d, xy = self._ubicar(u, W, max(q.caja[2], 1), self.qr_m, pose, scan, dth, rango=(0.4, 1.8))
@@ -215,6 +216,7 @@ class CamaraHilo:
         self.robot, self.per, self.sensores, self.hd = robot, percepcion, sensores, hd
         self.qr = False                     # buscar QR en cada foto (frente a la meta)
         self.hd_qr = False                  # ...y pedirlas en HD mientras tanto (el QR se lee de mas lejos)
+        self.hd_falla = 0                   # pedidos HD seguidos que fallaron: desde 2, se usa la preview
         self.lock = threading.Lock()
         self.resultados = []
         self.ultima_img = None
@@ -234,8 +236,20 @@ class CamaraHilo:
                 continue
             (pose, scan, th_scan, w), t = self.sensores(), time.monotonic()
             try:
-                hd = self.hd or (self.qr and self.hd_qr)
-                img = self.robot.photo(timeout=2.0, hd=True) if hd else self.robot.photo(timeout=2.0)
+                hd = (self.hd or (self.qr and self.hd_qr)) and self.hd_falla < 2
+                try:
+                    img = self.robot.photo(timeout=2.0, hd=True) if hd else self.robot.photo(timeout=2.0)
+                    if hd:
+                        self.hd_falla = 0
+                except Exception:
+                    if not hd:
+                        raise
+                    # la HD no llega (la camara no se lanzo con camara_rgb.sh --hd): seguir con la preview, que
+                    # es mejor que quedarse sin camara justo frente a la meta
+                    self.hd_falla += 1
+                    if self.hd_falla == 2:
+                        self.ultimo_error = "la foto HD no llega: sigo con la preview (lanzar camara_rgb.sh --hd)"
+                    img = self.robot.photo(timeout=2.0)
             except Exception as e:                        # camara caida, en el dock, timeout
                 self.errores += 1
                 self.ultimo_error = f"{type(e).__name__}: {e}"[:80]

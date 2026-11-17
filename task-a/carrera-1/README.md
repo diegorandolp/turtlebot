@@ -111,14 +111,33 @@ garcia` sirve). Si no está en la galería, el programa avisa **antes** de arran
    meta están en fila) y después sigue buscando.
 4. Frente a la buscada pasa a **LEER_QR**: se pone **de frente** (a 0.6 m sobre la normal de la pared,
    medida con el LiDAR: de costado la cara se reconoce pero el QR no se lee), y repite: quieto → mira 12° a
-   cada lado → se acerca hasta 0.40 m → se aleja un poco. Pide fotos **HD** mientras tanto (el QR se lee
-   desde ~1.4 m en HD, ~0.5 m en la preview). A los **30 s** sin leerlo vuelve igual y anuncia el nombre.
+   cada lado → se acerca hasta 0.40 m → se aleja un poco. Pide fotos **HD** mientras tanto (ver la tabla
+   del lector abajo). Si la HD no llega (la cámara no se lanzó con `camara_rgb.sh --hd`), tras 2 fallos
+   sigue con la preview y lo avisa en la ventana: nunca se queda sin cámara frente a la meta. A los
+   **30 s** sin leerlo vuelve igual y anuncia el nombre.
 5. **Nunca acepta una palabra dudosa.** Un QR cuenta solo si, **en la misma foto**, está en la esquina de
    abajo de una cara que **esa foto** reconoce como la buscada (con 0.08 de ventaja sobre la segunda
    persona). Se acepta un texto leído **≥ 2 veces**, con 2 de ventaja sobre cualquier otro, y que nunca se
    vio junto a otra persona. No se usa la posición en el mapa (con el odómetro corrido las fotos vecinas
    se mezclan). Mejor volver con el nombre que con una palabra equivocada.
 6. En A anuncia **"La palabra es …"** (voz, pantalla y registro).
+
+**El lector de QR** (`qr.py`): lee con OpenCV de a un QR por zona (debajo y a los costados de cada cara) y,
+si está instalado **opencv-contrib-python**, también con el lector de **WeChat** (zxing) sobre la imagen
+entera, que lee QR de ~2 px por módulo. Medido en el simulador (QR de 10 cm de frente, 4 mundos × 4 fotos ×
+2 ángulos, `banco_qr.py`), % de fotos en las que se lee el QR de la persona buscada:
+
+| Foto | Distancia | Antes | Ahora, solo OpenCV | Ahora, con WeChat |
+|---|---:|---:|---:|---:|
+| HD 1280×720 | 0.6 m | 100 % | 97 % | 97 % |
+| HD | 1.0 m | 50 % | 66 % | **72 %** |
+| HD | 1.5 m | 3 % | 0 % | **31 %** |
+| preview 250×250 | 0.6 m | 6 % | 6 % | **72 %** |
+| tiempo por foto (HD, 1–1.5 m) | | 80–270 ms | **~35 ms** | 110–160 ms |
+
+Para usar WeChat (recomendado; incluye todo lo de opencv-python):
+`pip uninstall -y opencv-python && pip install opencv-contrib-python`. Al arrancar con `--buscar` el
+programa dice qué lector usa.
 
 **A qué foto pertenece un QR** (`qr._de_que_cara`): las fotos están en fila a la misma altura, así que lo
 que separa el QR propio del de la vecina es la distancia **horizontal** al centro de la cara, en anchos de
@@ -134,12 +153,13 @@ la pared derecha (personas distintas de la galería, excluidas al reconocer), ca
 
 | Mundos | Éxitos | Palabra equivocada | Choques | Tiempo (mediana) |
 |---|---:|---:|---:|---:|
-| `croquis+6`, `denso:1..19+6` | 20/20 | 0 | 0 | 23 s |
-| fotos casi pegadas (`+6:0.3`) y otras salas, con `--duro` (2 corridas) | 18/20 y 18/20 | 0 | 0 | 46–50 s |
-| sin `--buscar` (`aleatorio:1..6` con y sin flechas, `croquis`, `denso`): sin cambios | 18/18 | — | 0 | 53 s (pasillos) |
+| `croquis+6`, `denso:1..19+6` | 20/20 | 0 | 0 | 19 s |
+| fotos casi pegadas (`+6:0.3`) y otras salas, con `--duro` | 18/20 | 0 | 0 | 32 s |
+| sin `--buscar` (`aleatorio`, `croquis`, `denso`): sin cambios | 10/10 | — | 0 | 39 s |
 
-Los fallos con `--duro` no son del QR: uno no encontró la meta en 3 min y otro volvió a 0.4 m de A con el
-odómetro desviado 3.7 %. **Éxito** = la palabra correcta, de vuelta a < 35 cm de A.
+Los fallos con `--duro` no son del QR: uno no encontró la meta en 3 min (`denso:22`) y otro leyó bien el
+QR pero volvió a > 35 cm de A con el odómetro desviado 3.7 % (`denso:25`; `relocalizar.py` corrigió 1.1 m
+pero no alcanzó). **Éxito** = la palabra correcta, de vuelta a < 35 cm de A.
 
 **Por validar con el robot real**: el tamaño del QR en la foto real (aquí 10 cm), si todas las fotos lo
 tienen en la misma esquina, la separación entre fotos, la altura de las fotos (la cámara está a ~13 cm del
@@ -360,6 +380,7 @@ real lo que el simulador supone. Los comandos van desde la raíz del repositorio
 | `carrera.py` | Programa principal (robot real o `--sim`): sensores, cámara, navegador, ventana, anuncio, registro |
 | `navegador.py` | Estados y control: carriles, ventana dinámica, flechas, acercarse, votar, volver |
 | `percepcion.py` | De cada foto: caras, flechas y QR con rumbo y posición en el mapa; memoria de cada foto y de las señales; cámara en otro hilo (robot real) |
+| `banco_qr.py` | Mide el lector de QR en el simulador (distancias, preview/HD, tiempo) |
 | `qr.py` | Leer los QR de una foto (cerca de cada cara, con varias variantes de la imagen) y saber de qué cara es cada uno. Basado en el lector de Sofía (`laberinto-1/qr.py`) |
 | `flechas.py` | Detector genérico de flechas (banco de flechas sintéticas) |
 | `simulador.py` | Robot simulado con LiDAR, freno del puente y cámara renderizada (misma API que `TB4Client`) |
@@ -372,7 +393,7 @@ real lo que el simulador supone. Los comandos van desde la raíz del repositorio
 | `robot_ros_sim.py`, `sim_ros.sh` | El simulador como robot ROS 2, con el puente real delante |
 | `probar_vision.py` | Ver la percepción en vivo sin mover el robot (con `--qr`, también los QR y de qué cara es cada uno); guardar fotos para evaluar |
 | `evaluar_flechas.py` | Acierto del detector de flechas sobre carpetas de fotos (izq/der/nada) |
-| `test_carrera.py`, `test_video.py`, `test_mejoras.py`, `test_qr.py` | Pruebas sin robot (54; `test_qr.py`: lectura y asignación de QR, candidatas, reglas para aceptar la palabra, carrera completa en `croquis+6`) |
+| `test_carrera.py`, `test_video.py`, `test_mejoras.py`, `test_qr.py` | Pruebas sin robot (56; `test_qr.py`: lectura y asignación de QR, candidatas, respaldo sin HD, reglas para aceptar la palabra, carrera completa en `croquis+6`) |
 
 Reutiliza de otras carpetas: el mapa de [slam-1](../slam-1) (`slam_core`), el planificador Dijkstra y el
 explorador de fronteras de [auto-1](../auto-1) (`planner`, `coverage`, `explorer`) y el reconocimiento de

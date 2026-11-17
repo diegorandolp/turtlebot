@@ -366,10 +366,12 @@ class Carrera:
         if self.estado in (PAUSA, VOLVER, HECHO):
             return
         actual = self.obj if self.obj in self.candidatas else None
-        objs = [c for c in self.candidatas if c.estado == "objetivo"]
-        # una candidata que no se encontro donde se la vio se deja de lado un rato (salvo que se la vuelva a ver)
-        pend = [c for c in self.candidatas if c.estado == "pendiente" and c.n >= 2
-                and (now > c.t_ignorar or c.visto_hace(now) < 1.0)]
+        # una candidata que no se encontro donde se la vio se deja de lado un rato (salvo que se la vuelva a
+        # ver): si no, ACERCAR la elige, no la ve y vuelve a IDA en cada foto (bucle)
+        def vale(c):
+            return now > c.t_ignorar or c.visto_hace(now) < 1.0
+        objs = [c for c in self.candidatas if c.estado == "objetivo" and vale(c)]
+        pend = [c for c in self.candidatas if c.estado == "pendiente" and c.n >= 2 and vale(c)]
         if objs:
             mejor = max(objs, key=self._p_buscada)
         elif pend:

@@ -93,7 +93,8 @@ def nombre_en_galeria(nombre, nombres):
 
 def armar(args, excluir=()):
     rec = Reconocedor(args.modelo, excluir=excluir)
-    per = Percepcion(rec, DetectorFlechas(color=args.flechas_color), hfov=args.hfov, hfov_hd=args.hfov_hd)
+    per = Percepcion(rec, DetectorFlechas(color=args.flechas_color), hfov=args.hfov, hfov_hd=args.hfov_hd,
+                     max_caras=6 if args.buscar else 3)
     engine = make_engine(args.engine, size_m=MAP_M, pixels=MAP_PX)
     pl = Planner(MAP_M, MAP_PX, cell=2, robot_radius=0.17, margin=0.05)
     frontal = args.mirada_desde is not None or not args.cobertura_simple
@@ -101,6 +102,10 @@ def armar(args, excluir=()):
     exp = Explorer(pl, cov=cov, vmax=min(args.vel, 0.22))
     vot = Votacion(rec.nombres)
     buscar = nombre_en_galeria(args.buscar, rec.nombres) if args.buscar else ""
+    if buscar and not args.sin_qr:
+        from qr import lector
+        print(f"[ok] busco a {buscar}; lector de QR: {lector()}"
+              + ("" if lector() == "wechat" else " (con opencv-contrib-python se lee desde mas lejos)"))
     cfg = Config(vmax=args.vel, vmax_vuelta=min(0.31, args.vel + 0.02), temprano=args.temprano,
                  usar_flechas=not args.sin_flechas, buscar=buscar, leer_qr=not args.sin_qr)
     pl_fino = Planner(MAP_M, MAP_PX, cell=2, robot_radius=0.10, margin=0.0)
@@ -365,8 +370,8 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
                 anunciado, t_hecho = True, now
                 texto = anuncio(nav)
                 print(f"\n==== {texto} ====\n", flush=True)
-                if not args.mudo:
-                    anunciar(texto)
+                if not args.mudo:                                        # la voz no lee bien "_" ni "-"
+                    anunciar(texto.replace("_", " ").replace("-", " "), imprimir=False)
             # ---- ventana (y video) ----
             grabar = grab is not None and grab.toca(now)
             if gui or grabar or (args.png and nav.estado == HECHO):
@@ -502,9 +507,13 @@ def parse(argv=None):
 
 def crear_sim(args):
     """Mundo y robot simulado segun las opciones (--mundo, --persona, --hd, --odom-*)."""
-    from mundos import construir
+    from mundos import ROSTROS, construir
     from simulador import SimRobot
-    mundo = construir(args.mundo, args.persona)
+    persona = args.persona
+    if persona is None and args.buscar and "+" in args.mundo:     # varias fotos: que la buscada este en la meta
+        carpetas = [d.name.replace("_", " ") for d in ROSTROS.iterdir() if d.is_dir()]
+        persona = nombre_en_galeria(args.buscar, carpetas)
+    mundo = construir(args.mundo, persona)
     hd = args.hd or bool(mundo.qr and not args.qr_sin_hd)                # con QR: la camara HD existe
     robot = SimRobot(mundo, hfov=args.hfov, camara_ok=not args.camara_caida,
                      foto_hd=(1280, 720, args.hfov_hd) if hd else None,

@@ -4,21 +4,18 @@ de abajo. Hay que leer el de la persona buscada y decir la palabra al volver a A
 
     buscar_qrs(img, caras) -> [QR(texto, caja, cara)]
 
-Busca primero cerca de cada cara (debajo y a los costados: ahi esta el QR de esa foto), con varias
-variantes de la imagen (tal cual, gris con contraste, ampliada x2/x3 si es chica), y si no hay caras en la
-foto, en la imagen entera. `cara` es el indice de la cara (en `caras`) a la que pertenece el QR: la de
-cuya esquina de abajo esta mas cerca, o None si no hay caras.
+Lee el recorte de la imagen donde pueden estar los QR (debajo y a los costados de cada cara; sin caras,
+la imagen entera). Con opencv-contrib-python usa el lector de WeChat (zxing), que lee QR de ~2 px por
+modulo y lee mas lejos (ver la tabla del README). Sin el, el de OpenCV con algunas variantes.
+`cara` es el indice de la cara (en `caras`) a la que pertenece el QR (ver _de_que_cara), o None.
 
-Basado en el lector de Sofia (task-a/laberinto-1/qr.py, rama manzana-zanabu), que probaba las mismas
-variantes. Aca se agrega la busqueda por zonas y saber de que foto es cada QR (la meta tiene varias).
+Basado en el lector de Sofia (task-a/laberinto-1/qr.py, rama manzana-zanabu), que probaba variantes de la
+imagen. Aca se agrega WeChat, leer solo donde puede haber QR y saber de que foto es cada QR.
 """
 from dataclasses import dataclass
 
 import cv2
 import numpy as np
-
-_det = None
-_aruco = None
 
 
 @dataclass
@@ -26,6 +23,11 @@ class QR:
     texto: str
     caja: tuple            # (x, y, w, h) en la imagen completa
     cara: int | None       # indice de la cara de la que es el QR (None = no habia caras)
+
+
+_det = None
+_aruco = None
+_wechat = None
 
 
 def _detectores():
@@ -36,23 +38,58 @@ def _detectores():
     return [d for d in (_det, _aruco) if d is not None]
 
 
-def _decodificar(img):
-    """-> [(texto, puntos 4x2 en coordenadas de `img`)] de todos los QR que se puedan leer."""
-    gris = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
-    variantes = [(gris, 1.0), (cv2.equalizeHist(gris), 1.0)]
-    if max(gris.shape[:2]) < 700:
-        variantes += [(cv2.resize(gris, None, fx=k, fy=k, interpolation=cv2.INTER_CUBIC), float(k)) for k in (2, 3)]
-    for v, k in variantes:
-        for d in _detectores():
-            try:
-                ok, textos, puntos, _ = d.detectAndDecodeMulti(v)
-            except cv2.error:
-                continue
-            if ok and puntos is not None:
-                out = [(t, np.asarray(p, float) / k) for t, p in zip(textos, puntos) if t]
-                if out:
-                    return out
-    return []
+def _lector_wechat():
+    """Lector de QR de WeChat (zxing): lee QR de ~2 px por modulo, donde el de OpenCV falla. Viene en
+    opencv-contrib-python (no en opencv-python). None si no esta."""
+    global _wechat
+    if _wechat is None:
+        try:
+            _wechat = cv2.wechat_qrcode_WeChatQRCode()
+        except (AttributeError, cv2.error):
+            _wechat = False
+    return _wechat or None
+
+
+def lector():
+    """'wechat' (opencv-contrib-python, lee desde mas lejos) u 'opencv'."""
+    return "wechat" if _lector_wechat() is not None else "opencv"
+
+
+def _caja(p):
+    p = np.asarray(p, float).reshape(-1, 2)
+    bx, by = p[:, 0].min(), p[:, 1].min()
+    return int(bx), int(by), int(p[:, 0].max() - bx), int(p[:, 1].max() - by)
+
+
+def _opencv(gris, multi):
+    """Lector de OpenCV (el normal y el Aruco): todos los QR (multi) o uno. -> [(texto, caja)]"""
+    out = []
+    for d in _detectores():
+        try:
+            if multi:
+                ok, textos, puntos, _ = d.detectAndDecodeMulti(gris)
+                if ok and puntos is not None:
+                    out += [(t, _caja(p)) for t, p in zip(textos, puntos) if t]
+            else:
+                t, p, _ = d.detectAndDecode(gris)
+                if t and p is not None:
+                    out.append((t, _caja(p)))
+        except cv2.error:
+            continue
+        if out and not multi:
+            break
+    return out
+
+
+def _wechat_lee(gris):
+    w = _lector_wechat()
+    if w is None:
+        return []
+    try:
+        textos, puntos = w.detectAndDecode(gris)
+    except cv2.error:
+        return []
+    return [(t, _caja(p)) for t, p in zip(textos, puntos) if t]
 
 
 def _zona(caja, W, H):
@@ -65,25 +102,32 @@ def _zona(caja, W, H):
 
 
 def buscar_qrs(img, cajas_caras=()):
-    """img BGR; cajas_caras = [(x, y, w, h)] de las caras detectadas. -> [QR] sin repetidos."""
+    """img BGR; cajas_caras = [(x, y, w, h)] de las caras detectadas. -> [QR] sin repetidos.
+
+    Medido en el simulador (QR de 10 cm, foto HD, ~/pruebas): lo que mas lee es el lector de OpenCV de a UN
+    QR por zona (debajo y a los costados de cada cara: 97 % a 0.6 m, 78 % a 1 m) junto con WeChat sobre la
+    imagen entera (91 % / 56 %, y el unico que lee algo a 1.5 m). Leer todos de una vez (multi) o WeChat
+    sobre un recorte lee bastante menos. Las zonas chicas (preview 250x250) se amplian x2."""
     if img is None or img.size == 0:
         return []
-    H, W = img.shape[:2]
-    zonas = [_zona(c, W, H) for c in cajas_caras] or [(0, 0, W, H)]
+    gris = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+    H, W = gris.shape[:2]
     vistos = {}
+
+    def agregar(lista, dx=0, dy=0, k=1.0):
+        for t, (bx, by, bw, bh) in lista:
+            vistos.setdefault(t, (int(bx / k) + dx, int(by / k) + dy, int(bw / k), int(bh / k)))
+
+    zonas = [z for z in (_zona(c, W, H) for c in cajas_caras) if z[2] - z[0] >= 20 and z[3] - z[1] >= 20]
     for x0, y0, x1, y1 in zonas:
-        if x1 - x0 < 20 or y1 - y0 < 20:
-            continue
-        for texto, p in _decodificar(img[y0:y1, x0:x1]):
-            if texto in vistos:
-                continue
-            p = p + np.array([x0, y0])
-            bx, by = p[:, 0].min(), p[:, 1].min()
-            vistos[texto] = (int(bx), int(by), int(p[:, 0].max() - bx), int(p[:, 1].max() - by))
-    if not vistos and cajas_caras:                         # el QR puede estar fuera de las zonas (cara cortada)
-        for texto, p in _decodificar(img):
-            bx, by = p[:, 0].min(), p[:, 1].min()
-            vistos.setdefault(texto, (int(bx), int(by), int(p[:, 0].max() - bx), int(p[:, 1].max() - by)))
+        z = gris[y0:y1, x0:x1]
+        if max(z.shape) < 450:                          # recorte chico (preview): ampliar ayuda
+            agregar(_opencv(cv2.resize(z, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC), False), x0, y0, 2.0)
+        else:
+            agregar(_opencv(z, False), x0, y0)
+    agregar(_wechat_lee(gris))
+    if not zonas and not vistos:                         # sin caras: la imagen entera con OpenCV
+        agregar(_opencv(gris, True))
     return [QR(t, c, _de_que_cara(c, cajas_caras)) for t, c in vistos.items()]
 
 
