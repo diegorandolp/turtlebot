@@ -40,7 +40,7 @@ for p in (HERE, HERE.parent / "auto-1", HERE.parent / "slam-1", ROOT):
 from coverage import Coverage                                               # noqa: E402  (auto-1)
 from explorer import Explorer                                               # noqa: E402  (auto-1)
 from flechas import DetectorFlechas                                         # noqa: E402
-from navegador import (ACERCAR, EXPLORAR, HECHO, IDA, LEER_QR, PAUSA, RECONOCER, VOLVER,   # noqa: E402
+from navegador import (ACERCAR, EXPLORAR, FILA, HECHO, IDA, LEER_QR, PAUSA, RECONOCER, VOLVER,   # noqa: E402
                        Carrera, Config)
 from percepcion import CamaraHilo, Objetivo, Percepcion, Senales           # noqa: E402
 from planner import Planner                                                 # noqa: E402  (auto-1)
@@ -53,7 +53,8 @@ from video import Grabador, ruta_auto                                       # no
 
 MAP_M, MAP_PX = 20.0, 500
 COLORES = {PAUSA: (0, 200, 255), IDA: (0, 255, 0), ACERCAR: (255, 0, 255), RECONOCER: (255, 0, 255),
-           VOLVER: (255, 200, 0), HECHO: (0, 255, 0), EXPLORAR: (0, 200, 255), LEER_QR: (255, 255, 0)}
+           VOLVER: (255, 200, 0), HECHO: (0, 255, 0), EXPLORAR: (0, 200, 255), LEER_QR: (255, 255, 0),
+           FILA: (255, 160, 0)}
 
 
 def ascii(s):
@@ -93,7 +94,8 @@ def nombre_en_galeria(nombre, nombres):
 
 def armar(args, excluir=()):
     rec = Reconocedor(args.modelo, excluir=excluir)
-    per = Percepcion(rec, DetectorFlechas(color=args.flechas_color), hfov=args.hfov, hfov_hd=args.hfov_hd,
+    forma = not args.flechas_solo_negras                                 # las senales del lab pueden ser de color
+    per = Percepcion(rec, DetectorFlechas(color=args.flechas_color, forma=forma), hfov=args.hfov, hfov_hd=args.hfov_hd,
                      max_caras=6 if args.buscar else 3)
     engine = make_engine(args.engine, size_m=MAP_M, pixels=MAP_PX)
     pl = Planner(MAP_M, MAP_PX, cell=2, robot_radius=0.17, margin=0.05)
@@ -109,7 +111,7 @@ def armar(args, excluir=()):
     cfg = Config(vmax=args.vel, vmax_vuelta=min(0.31, args.vel + 0.02), temprano=args.temprano,
                  usar_flechas=not args.sin_flechas, buscar=buscar, leer_qr=not args.sin_qr)
     pl_fino = Planner(MAP_M, MAP_PX, cell=2, robot_radius=0.10, margin=0.0)
-    nav = Carrera(cfg, pl, vot, Objetivo(vot), Senales(), exp, planner_fino=pl_fino)
+    nav = Carrera(cfg, pl, vot, Objetivo(vot), Senales(min_n=2), exp, planner_fino=pl_fino)
     if args.mirada_desde is not None:
         nav.mirada = MiradaLateral(cov, desde_s=args.mirada_desde)
     return rec, per, engine, nav, cov
@@ -142,6 +144,20 @@ def panel_camara(ultima, nav, lado=400):
         cv2.rectangle(out, (x, y), (x + w, y + h), (255, 255, 0), 2)
         cv2.putText(out, o.texto[:24], (x, min(out.shape[0] - 4, y + h + 14)), cv2.FONT_HERSHEY_SIMPLEX, 0.42,
                     (255, 255, 0), 1, cv2.LINE_AA)
+    if nav.cfg.buscar:
+        lineas = [f"BUSCO: {ascii(nav.cfg.buscar)}"]
+        lineas.append(f"QR: {ascii(nav.palabra)}" if nav.palabra else "QR: (sin leer)")
+        cv2.rectangle(out, (0, 0), (out.shape[1], 40), (0, 0, 0), -1)
+        for i, t in enumerate(lineas):
+            cv2.putText(out, t, (6, 16 + 18 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                        (0, 255, 255) if i == 1 and nav.palabra else (255, 255, 255), 1, cv2.LINE_AA)
+        q = getattr(nav, "qr_vista", None)
+        if q is not None and q.size:
+            lado = 110
+            qv = cv2.resize(q, (lado, lado), interpolation=cv2.INTER_NEAREST)
+            y0 = out.shape[0] - lado - 4
+            out[y0:y0 + lado, out.shape[1] - lado - 4:out.shape[1] - 4] = qv
+            cv2.rectangle(out, (out.shape[1] - lado - 5, y0 - 1), (out.shape[1] - 3, y0 + lado), (0, 255, 255), 2)
     if nav.vot is not None and nav.vot.n:
         for i, (n, p) in enumerate(nav.vot.top(3)):
             cv2.rectangle(out, (6, out.shape[0] - 60 + 18 * i), (6 + int(150 * p), out.shape[0] - 46 + 18 * i), (255, 0, 255), -1)
@@ -174,7 +190,7 @@ def panel_mapa(engine, nav, pos, lado=400, radio_m=5.0):
         cv2.line(img, px(*a), px(*b), (0, 200, 0), 2)
     if nav.sen is not None:
         for sg in nav.sen.lista:
-            col = (150, 150, 150) if sg.usada else ((0, 140, 255) if sg.confirmada() else (0, 220, 255))
+            col = (150, 150, 150) if sg.usada else ((0, 140, 255) if sg.confirmada(nav.sen.min_n) else (0, 220, 255))
             cv2.circle(img, px(*sg.xy), 6, col, 2)
             cv2.putText(img, sg.dir(), (px(*sg.xy)[0] + 7, px(*sg.xy)[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.4, col, 1)
     cv2.drawMarker(img, px(*nav.home), (0, 160, 0), cv2.MARKER_DIAMOND, 14, 2)
@@ -225,7 +241,7 @@ def ventana(engine, nav, pos, ultima, robot, sim, t_rel, camtxt):
     out = np.vstack([top, bar])
     final = anuncio(nav)
     if nav.estado == HECHO and final:
-        txt = ascii(nav.palabra or nav.nombre).upper()
+        txt = ("LA PALABRA ES: " + ascii(nav.palabra)) if nav.palabra else ascii(nav.nombre).upper()
         ancho = max(400, 22 * len(txt) + 20)
         cv2.rectangle(out, (0, 0), (min(ancho, out.shape[1]), 56), (0, 120, 0), -1)
         cv2.putText(out, txt, (10, 40), cv2.FONT_HERSHEY_DUPLEX, 1.1 if len(txt) < 18 else 0.8, (255, 255, 255), 2,
@@ -328,19 +344,24 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
             sens.update(pos=pos, th_scan=pos_scan[2], w=pose.w if pose is not None else 0.0)
             # ---- camara ----
             buscar = nav.estado not in (PAUSA, VOLVER, HECHO)
+            ver = nav.estado == VOLVER                                   # la vuelta: fotos solo para la ventana/video
             leer_qr = nav.quiere_qr                                      # frente a la meta: buscar QR (y en HD)
             if sim:
-                if buscar and now >= t_cam:
+                if (buscar or ver) and now >= t_cam:
                     hd = args.hd or (leer_qr and not args.qr_sin_hd)
                     img = robot.photo(hd=hd)
-                    caras, flechas, qrs = per.procesar(img, pos, scan, now, sens["w"], pos_scan[2], leer_qr=leer_qr)
+                    if ver:
+                        caras, flechas, qrs = [], [], []
+                    else:
+                        caras, flechas, qrs = per.procesar(img, pos, scan, now, sens["w"], pos_scan[2], leer_qr=leer_qr)
                     pendientes.append((now + args.cam_latencia, now, img, caras, flechas, qrs))
-                    t_cam = now + (max(args.cam_periodo, 0.3) if hd else args.cam_periodo)
+                    t_cam = now + (0.3 if ver else (max(args.cam_periodo, 0.3) if hd else args.cam_periodo))
                 listos = [p[1:] for p in pendientes if p[0] <= now]
                 pendientes = [p for p in pendientes if p[0] > now]
                 cam_ok = robot.camara_ok
             else:
-                cam.activa = buscar
+                cam.activa = buscar or ver
+                cam.solo_ver = ver
                 cam.qr, cam.hd_qr = leer_qr, not args.qr_sin_hd
                 listos = cam.recoger()
                 cam_ok = cam.t_ok is not None and now - cam.t_ok < 6.0
@@ -353,6 +374,12 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
                     nav.ver_flecha(now, o)
                 for o in qrs:
                     nav.ver_qr(now, o)
+                if nav.palabra and nav.qr_vista is None:                 # la foto del QR leido, para la ventana
+                    for o in qrs:
+                        if o.texto == nav.palabra:
+                            x, y, w_, h_ = o.caja
+                            m = int(0.25 * max(w_, h_))
+                            nav.qr_vista = img[max(0, y - m):y + h_ + m, max(0, x - m):x + w_ + m].copy()
                 if nav.estado in (IDA, EXPLORAR) and scan is not None:
                     if isinstance(cov, CoberturaFrontal):
                         # lo que la camara mira DE FRENTE durante la ida y el plan B: asi el plan B sabe que
@@ -474,7 +501,9 @@ def parse(argv=None):
     ap.add_argument("--vel", type=float, default=0.30, help="velocidad maxima en m/s (defecto 0.30; el robot llega a 0.31)")
     ap.add_argument("--temprano", action="store_true", help="volver apenas se sabe quien es (sin terminar de acercarse a B)")
     ap.add_argument("--sin-flechas", action="store_true", help="ignorar las flechas")
-    ap.add_argument("--flechas-color", action="store_true", help="aceptar flechas de color (por defecto solo tinta oscura)")
+    ap.add_argument("--flechas-color", action="store_true", help="(con --flechas-solo-negras) aceptar tambien tinta de color")
+    ap.add_argument("--flechas-solo-negras", action="store_true",
+                    help="flechas solo de tinta oscura (por defecto cuenta la FORMA, de cualquier color)")
     ap.add_argument("--modelo", default="auto", help="reconocimiento: auto (r50 si esta instalado, si no mbf) | mbf | r50")
     ap.add_argument("--hfov", type=float, default=40.0, help="campo de vision horizontal de la preview 250x250, en grados")
     ap.add_argument("--hd", action="store_true",

@@ -89,16 +89,17 @@ class Percepcion:
             if c.score < 0.7:
                 continue
             u, _ = c.centro
-            # la cara de una foto puede medir de 4 a 15 cm: el tamano casi no sirve, manda el LiDAR
-            rumbo, d, xy = self._ubicar(u, W, c.ancho, self.cara_m, pose, scan, dth, rango=(0.3, 1.6))
+            # la cara de una foto puede medir de 4 a 15 cm: el tamano casi no sirve, manda el LiDAR. Si el LiDAR
+            # da menos, la foto no puede estar mas lejos (las cajas tapan igual a la camara, que va mas baja)
+            rumbo, d, xy = self._ubicar(u, W, c.ancho, self.cara_m, pose, scan, dth, rango=(0.12, 1.6))
             res = self.rec.resultado(img, c) if c.ancho >= self.min_px else None
             caras.append(Obs("cara", t, rumbo, d, xy, c.ancho, c.caja, res=res,
                              borde_sup=c.caja[1] < 0.04 * H, girando=girando))
         cajas = [o.caja for o in caras]
         for f in self.det_fl(img)[:4]:
             u, v = f.centro
-            if any(x - 0.5 * w <= u <= x + 1.5 * w and y - 0.5 * h <= v <= y + 2.0 * h for x, y, w, h in cajas):
-                continue                                  # ojos, boca o ropa de la foto de B: no son flechas
+            if any(x - 1.6 * w <= u <= x + 2.6 * w and y - 0.8 * h <= v <= y + 4.0 * h for x, y, w, h in cajas):
+                continue                                  # dentro de la hoja de una foto (ojos, ropa, el QR): no es flecha
             rumbo, d, xy = self._ubicar(u, W, f.lado, self.flecha_m, pose, scan, dth)
             flechas.append(Obs("flecha", t, rumbo, d, xy, f.lado, f.caja, dir=f.dir, girando=girando))
         qrs = []
@@ -172,8 +173,9 @@ class Senal:
 class Senales:
     """Flechas vistas, agrupadas por posicion: varias fotos de la misma senal votan su sentido."""
 
-    def __init__(self, radio=1.0):
+    def __init__(self, radio=1.0, min_n=2):
         self.radio = radio
+        self.min_n = min_n                  # fotos para confirmar una senal (3 si se aceptan flechas de color)
         self.lista = []
 
     def agregar(self, o):
@@ -202,7 +204,7 @@ class Senales:
                 s.usada = True
 
     def pendientes(self):
-        return [s for s in self.lista if not s.usada and s.confirmada() and s.dir() in (IZQ, DER, ARRIBA)]
+        return [s for s in self.lista if not s.usada and s.confirmada(self.min_n) and s.dir() in (IZQ, DER, ARRIBA)]
 
 
 # ---------------------------------------------------------------- robot real: camara en otro hilo
@@ -217,6 +219,7 @@ class CamaraHilo:
         self.qr = False                     # buscar QR en cada foto (frente a la meta)
         self.hd_qr = False                  # ...y pedirlas en HD mientras tanto (el QR se lee de mas lejos)
         self.hd_falla = 0                   # pedidos HD seguidos que fallaron: desde 2, se usa la preview
+        self.solo_ver = False               # True = fotos solo para la ventana/video (la vuelta): sin procesar
         self.lock = threading.Lock()
         self.resultados = []
         self.ultima_img = None
@@ -257,7 +260,11 @@ class CamaraHilo:
                 continue
             if pose is None:
                 continue
-            caras, flechas, qrs = self.per.procesar(img, pose, scan, t, w, th_scan, leer_qr=self.qr)
+            if self.solo_ver:
+                caras, flechas, qrs = [], [], []
+                time.sleep(0.25)                          # ~3 fotos/s alcanzan para ver
+            else:
+                caras, flechas, qrs = self.per.procesar(img, pose, scan, t, w, th_scan, leer_qr=self.qr)
             with self.lock:
                 self.resultados.append((t, img, caras, flechas, qrs))
                 self.ultima_img = (img, caras, flechas)

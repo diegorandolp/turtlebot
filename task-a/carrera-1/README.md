@@ -102,13 +102,21 @@ garcia` sirve). Si no está en la galería, el programa avisa **antes** de arran
 **Cómo lo hace** (`navegador.py`, `percepcion.py`, `qr.py`):
 
 1. **Cada foto vista es una "candidata"** con su propia votación de quién es. Dos caras son la misma foto
-   si están a menos de 0.35 m en el mapa, salvo que cada una sea claramente de una persona distinta (fotos
-   casi pegadas u odómetro corrido no las mezclan).
+   si están a menos de 0.22 m en el mapa (las fotos de la meta pueden estar a ~0.3 m), salvo que cada una
+   sea claramente de una persona distinta. La posición sale del LiDAR en ese rumbo (la foto está en una
+   pared); el tamaño de la cara solo se usa si el LiDAR no da lectura.
 2. Una candidata pasa a **"la buscada"** si su votación lo dice con p ≥ 0.97, y a **"otra"** si dice otra
    persona con p ≥ 0.97 (solo de cerca: con la cara de ≥ 20 px; de lejos podría ser la buscada mal
-   reconocida). Se va primero a la que más se parece a la buscada.
-3. Si la foto resultó ser **otra** y no queda ninguna pendiente, **mira 55° a cada lado** (las fotos de la
-   meta están en fila) y después sigue buscando.
+   reconocida). **Con `--buscar` solo votan las fotos tomadas de frente**: cada voto pesa cos² del ángulo
+   con la normal de la pared y de más de 55° no vota (de refilón ArcFace confunde personas y descartaba a
+   la buscada).
+3. **FILA: recorrer la fila de fotos.** En cuanto hay fotos vistas y ninguna es todavía la buscada, el
+   robot no va foto por foto: arma puntos de vista **de frente a la pared**, cada 0.3 m a lo largo de la
+   fila (y 0.6 m más allá de las puntas, por si hay fotos que aún no vio), a la distancia que deja libre el
+   LiDAR (0.75 → 0.45 m), y los recorre empezando por la punta más cercana: llega, gira hacia la pared, mira
+   0.7 s y sigue. Salta los puntos inalcanzables y los que están frente a una foto que ya se sabe que es
+   otra. Apenas una foto resulta ser la buscada, deja la fila y va por ella (ACERCAR → RECONOCER → LEER_QR).
+   Si la ve de costado y sin votos, se pone de frente antes de decidir.
 4. Frente a la buscada pasa a **LEER_QR**: se pone **de frente** (a 0.6 m sobre la normal de la pared,
    medida con el LiDAR: de costado la cara se reconoce pero el QR no se lee), y repite: quieto → mira 12° a
    cada lado → se acerca hasta 0.40 m → se aleja un poco. Pide fotos **HD** mientras tanto (ver la tabla
@@ -144,22 +152,33 @@ que separa el QR propio del de la vecina es la distancia **horizontal** al centr
 cara `w`: el propio queda a ≤ ~1.6 w (retrato: ~0.8 w; cuerpo entero: ~1.6 w) y el de la vecina, aunque
 estén casi pegadas, a ≥ 2.5 w. Se asigna si está debajo de la cara y a ≤ 2.0 w de lado.
 
-**Mundos del simulador** con varias fotos: `+K` al final de `croquis` o `denso:N` pone K fotos en fila en
-la pared derecha (personas distintas de la galería, excluidas al reconocer), cada una con un **QR real**
-(`cv2.QRCodeEncoder`, 10 cm, esquina izquierda o derecha al azar) y una palabra que el robot no conoce.
-`+K:S` fija la separación en S m (defecto 0.40–0.55): `denso:3+6:0.3` = fotos casi pegadas.
+**Mundos del simulador** con varias fotos: `+K` al final de `croquis`, `denso:N` o `lab:N` pone K fotos en
+fila (personas distintas de la galería, excluidas al reconocer), cada una con un **QR real**
+(`cv2.QRCodeEncoder`, 10 cm, esquina inferior izquierda o derecha al azar) y una palabra que el robot no
+conoce. La buscada es una al azar de la fila (no la primera que se ve). `+K:S` fija la separación en S m
+(defecto 0.40–0.55): `denso:3+6:0.3` = fotos casi pegadas. En `croquis` las fotos están en la pared derecha
+del pasillo de la meta; en `denso:N`, en la pared derecha; en `lab:N`, en una pared al azar (derecha,
+arriba o abajo).
+
+**Qué muestra el video** (y la ventana): la cámara del robot **todo el recorrido, también a la vuelta**
+(antes se apagaba al volver para ahorrar CPU; ahora a la vuelta toma una foto cada 0.3 s solo para
+mostrarla, sin detectar nada), arriba una barra con **"BUSCO: nombre"** y **"QR: palabra"** (o "(sin
+leer)"), abajo a la derecha el **recorte del QR** aceptado, y al llegar a A el cartel **"LA PALABRA ES: …"**.
 
 **Resultados** (simulador, límite de 3 min):
 
 | Mundos | Éxitos | Palabra equivocada | Choques | Tiempo (mediana) |
 |---|---:|---:|---:|---:|
-| `croquis+6`, `denso:1..19+6` | 20/20 | 0 | 0 | 19 s |
-| fotos casi pegadas (`+6:0.3`) y otras salas, con `--duro` | 18/20 | 0 | 0 | 32 s |
-| sin `--buscar` (`aleatorio`, `croquis`, `denso`): sin cambios | 10/10 | — | 0 | 39 s |
+| `croquis`, `croquis+6`, `lab:1..8+6`, `denso:1..4+6` | **14/14** | 0 | 0 | 72 s |
+| los mismos tipos con `--duro` (odometría con sesgo, cámara lenta) y fotos casi pegadas (`+6:0.3`) | 10/12 | 0 | 0 | 80 s |
+| sin `--buscar`: `aleatorio:1..6` con y sin flechas, `croquis`, `denso:1..7` | 19/20 | — | 0 | 50–70 s |
 
-Los fallos con `--duro` no son del QR: uno no encontró la meta en 3 min (`denso:22`) y otro leyó bien el
-QR pero volvió a > 35 cm de A con el odómetro desviado 3.7 % (`denso:25`; `relocalizar.py` corrigió 1.1 m
-pero no alcanzó). **Éxito** = la palabra correcta, de vuelta a < 35 cm de A.
+Con el croquis fiel y la buscada en cualquier lugar de la fila los tiempos suben (antes 19 s de mediana:
+el croquis tenía un atajo recto y la buscada solía ser la primera foto). En `croquis+6` el robot lee las 3
+flechas, llega a la meta a los ~20 s, recorre la fila y vuelve con la palabra en 80–110 s. Los fallos con
+`--duro`: `lab:2+6` leyó bien la palabra pero volvió a > 35 cm de A (odómetro con sesgo) y `denso:5+6` no
+encontró la meta en 3 min; sin `--buscar`, `denso:3` (fallo conocido: B detrás de un tabique).
+**Éxito** = la palabra correcta, de vuelta a < 35 cm de A.
 
 **Por validar con el robot real**: el tamaño del QR en la foto real (aquí 10 cm), si todas las fotos lo
 tienen en la misma esquina, la separación entre fotos, la altura de las fotos (la cámara está a ~13 cm del
@@ -188,17 +207,31 @@ tiene su altura, y la **cámara** sí se ve en perspectiva (raycaster). El **LiD
 (sin física de ruedas, sin deslizamiento): sirve para encontrar fallos de lógica y comparar estrategias,
 no reemplaza probar en el robot.
 
-### Mundos del laboratorio: `croquis` y `denso:N`
+### Mundos del laboratorio: `croquis`, `lab:N` y `denso:N`
 
-El laboratorio es una sala chica (~4×4 m) **llena de cajas**, no un pasillo. Para eso hay dos mundos más:
+El laboratorio es una sala chica (~4×4 m) **llena de cajas de cartón** (paredes marrón medio) con **piso
+gris medio**; así se dibujan las paredes, las cajas y el suelo en estos mundos, y la cámara simulada está a
+13 cm del suelo con el mismo campo de visión que la OAK-D (40° la preview, 66° la HD), desenfoque, ruido y
+JPEG: lo que ve el robot en el video es lo que vería en el laboratorio.
 
 | Mundo | Qué es |
 |---|---|
-| `croquis[:W:H]` | El croquis del circuito (dibujo a mano: 9 cajas) estirado a W×H m (defecto 4×4). A abajo a la izquierda mirando a la derecha, la foto de B en la pared derecha abajo (**supuesto**: el dibujo no marca B). El dibujo no está a escala: las cajas que cerrarían el paso se achican |
-| `denso:N[:W:H]` | Sala W×H (defecto 4×4) con 7–11 cajas al azar: cuadradas y tabiques largos, algunas pegadas a la pared. A a la izquierda, B en la pared derecha, a menudo escondida detrás de un tabique |
+| `croquis[:W:H]` | El croquis del circuito (dibujo a mano: 9 cajas), **fiel al dibujo**, en W×H m (defecto 4×4): A abajo a la izquierda, una repisa sobre A que obliga a subir, tabiques largos y la **meta en el pasillo de la derecha (~1.15 m), con entrada por arriba** (**supuesto**: el dibujo no marca B). Las 3 señales del dibujo están en su sitio (izq, der, der) y son **de colores al azar** (negro, azul, rojo o verde). No hay atajo recto: antes las cajas que cerraban el paso se achicaban y el robot iba en línea recta a la primera foto; ya no |
+| `lab:N[:W:H]` | Sala con 7–11 cajas al azar y la **meta en una pared al azar** (derecha, arriba o abajo) |
+| `denso:N[:W:H]` | Igual que `lab:N` pero con la meta siempre en la pared derecha, a menudo detrás de un tabique |
 
-En los dos **siempre queda un paso de al menos ~0.48 m** de A a B (el robot mide 0.34 m): una caja que lo
-cerraría se achica o se quita.
+En todos **queda un paso de al menos ~0.48 m** de A a B (el robot mide 0.34 m). En `croquis` no se achica
+nada: si una caja cerrara el paso, es un error del mundo y el programa lo dice.
+
+**Señales de colores: se lee la forma.** En el laboratorio las flechas pueden no ser negras. El detector
+(`flechas.py`, `forma=True`, por defecto) pasa la imagen a `min(B, G, R)`: una flecha de cualquier color
+saturado u oscura sale oscura sobre el cartón y el papel blanco, y lo que se mide es su **forma** (la punta
+y el cuerpo), no su color. `--flechas-solo-negras` vuelve al detector anterior.
+
+**Pasillos con fotos de costado.** En un pasillo la cámara (40°) apunta a lo largo y una foto en la pared
+de al lado no entra nunca. Pasadas las señales (1.5 m después de la última usada) y sin ninguna foto por
+revisar, cada ~0.9 m el robot mira 75° hacia las paredes que tiene a menos de 1.4 m. Si la foto es chica y
+ya está a menos de 0.5 m de la pared, decide con lo que vio en vez de insistir en acercarse.
 
 ### Video del recorrido
 
@@ -378,13 +411,13 @@ real lo que el simulador supone. Los comandos van desde la raíz del repositorio
 | Archivo | Qué hace |
 |---|---|
 | `carrera.py` | Programa principal (robot real o `--sim`): sensores, cámara, navegador, ventana, anuncio, registro |
-| `navegador.py` | Estados y control: carriles, ventana dinámica, flechas, acercarse, votar, volver |
+| `navegador.py` | Estados y control: carriles, ventana dinámica, flechas, barrido lateral en pasillos, recorrer la fila de fotos (FILA), acercarse, votar (por frontalidad con `--buscar`), leer el QR, volver |
 | `percepcion.py` | De cada foto: caras, flechas y QR con rumbo y posición en el mapa; memoria de cada foto y de las señales; cámara en otro hilo (robot real) |
 | `banco_qr.py` | Mide el lector de QR en el simulador (distancias, preview/HD, tiempo) |
 | `qr.py` | Leer los QR de una foto (cerca de cada cara, con varias variantes de la imagen) y saber de qué cara es cada uno. Basado en el lector de Sofía (`laberinto-1/qr.py`) |
-| `flechas.py` | Detector genérico de flechas (banco de flechas sintéticas) |
+| `flechas.py` | Detector genérico de flechas por su forma, de cualquier color (`forma=True`: canal `min(B,G,R)`) |
 | `simulador.py` | Robot simulado con LiDAR, freno del puente y cámara renderizada (misma API que `TB4Client`) |
-| `mundos.py` | Mundos fijos (`demo`, `demo-sin-flechas`, `sala`, `croquis[:W:H]`), circuitos aleatorios (`aleatorio:N[:sin]`) y salas con cajas (`denso:N[:W:H]`); `+K[:S]` = K fotos con QR en la meta |
+| `mundos.py` | Mundos fijos (`demo`, `demo-sin-flechas`, `sala`, `croquis[:W:H]`), circuitos aleatorios (`aleatorio:N[:sin]`) y salas con cajas (`denso:N[:W:H]`, `lab:N[:W:H]` con la meta en una pared al azar), con cajas de cartón y piso gris; `+K[:S]` = K fotos con QR en la meta |
 | `relocalizar.py` | Volver exacto a A: alinea el scan del LiDAR con el guardado en A |
 | `mirada.py` | Plan B que mira las paredes de frente (`CoberturaFrontal`) y mirada lateral opcional |
 | `banco_pruebas.py` | Muchas carreras en paralelo y su resumen; `--videos` guarda el video de las que fallan o chocan; `--duro` |
@@ -393,7 +426,7 @@ real lo que el simulador supone. Los comandos van desde la raíz del repositorio
 | `robot_ros_sim.py`, `sim_ros.sh` | El simulador como robot ROS 2, con el puente real delante |
 | `probar_vision.py` | Ver la percepción en vivo sin mover el robot (con `--qr`, también los QR y de qué cara es cada uno); guardar fotos para evaluar |
 | `evaluar_flechas.py` | Acierto del detector de flechas sobre carpetas de fotos (izq/der/nada) |
-| `test_carrera.py`, `test_video.py`, `test_mejoras.py`, `test_qr.py` | Pruebas sin robot (56; `test_qr.py`: lectura y asignación de QR, candidatas, respaldo sin HD, reglas para aceptar la palabra, carrera completa en `croquis+6`) |
+| `test_carrera.py`, `test_video.py`, `test_mejoras.py`, `test_qr.py` | Pruebas sin robot (59; `test_qr.py`: lectura y asignación de QR, candidatas, FILA, respaldo sin HD, reglas para aceptar la palabra, mundos del laboratorio, flechas de color, carrera completa en `croquis+6`) |
 
 Reutiliza de otras carpetas: el mapa de [slam-1](../slam-1) (`slam_core`), el planificador Dijkstra y el
 explorador de fronteras de [auto-1](../auto-1) (`planner`, `coverage`, `explorer`) y el reconocimiento de

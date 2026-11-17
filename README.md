@@ -19,7 +19,7 @@ Choques y respuestas equivocadas tienen penalidad.
 
 | | Hecho | Falta |
 |---|---|---|
-| **Tarea A** ([carrera-1](task-a/carrera-1/README.md)) | Navegación rápida sin choques en salas con cajas, flechas, varias fotos + QR (`--buscar`), volver exacto a A, video del recorrido. En simulación: 20/20 con 6 fotos y QR, 0 choques, 0 palabras equivocadas | **Probar con el robot real** (guía en el README de carrera-1); medir CPU si se quiere correr en la Raspberry |
+| **Tarea A** ([carrera-1](task-a/carrera-1/README.md)) | Navegación rápida sin choques en salas con cajas, flechas, varias fotos + QR (`--buscar`), volver exacto a A, video del recorrido con la cámara del robot de ida y vuelta. Simulador con el aspecto del laboratorio (cajas de cartón, piso gris), croquis fiel y señales de colores leídas por su forma. En simulación: 14/14 con 6 fotos y QR (croquis, `lab:N`, `denso:N`), 0 choques, 0 palabras equivocadas | **Probar con el robot real** (guía en el README de carrera-1); medir CPU si se quiere correr en la Raspberry |
 | **Tarea B** ([gestos-1](task-b/gestos-1/README.md)) | Conducir con gestos de la mano (webcam de la PC) | Reconocer a la persona, leer su QR y anunciarlo (se puede reutilizar `task-a/carrera-1/qr.py` y `reconocimiento/`) |
 
 Arquitectura: la PC habla con el robot por **UDP** (no necesita ROS). En el robot corre un puente
@@ -66,6 +66,7 @@ python3 task-a/carrera-1/carrera.py --sim                 # probar en el simulad
 python3 task-a/carrera-1/banco_pruebas.py --n 20          # 40 carreras simuladas en circuitos aleatorios
 python3 task-a/carrera-1/probar_vision.py                 # con el robot: ver flechas, caras y nombres (sin moverlo)
 python3 task-a/carrera-1/carrera.py --sim --mundo croquis+6 --go --video   # reglas del lab: 6 fotos con QR
+python3 task-a/carrera-1/carrera.py --sim --mundo lab:3+6 --go --video    # meta en otra pared, sala con cajas al azar
 python3 task-a/carrera-1/probar_vision.py --qr --hd       # con el robot: ver QR y de que cara es cada uno
 python3 task-a/carrera-1/carrera.py --undock --buscar "Nombre Apellido"   # COMPETENCIA: arranca en pausa, g = empezar
 ```

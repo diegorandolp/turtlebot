@@ -248,11 +248,17 @@ class Banco:
 
 class DetectorFlechas:
     def __init__(self, umbral=0.68, margen=0.10, margen_neg=0.04, min_lado=9, max_frac=0.7, contraste=0.72,
-                 color=False):
+                 color=False, forma=False):
         """color=True acepta tambien flechas de color sobre papel blanco (mas falsos positivos con
-        objetos de colores del fondo; usar solo si las flechas del circuito son de color)."""
+        objetos de colores del fondo; usar solo si las flechas del circuito son de color).
+        forma=True: SOLO LA FORMA cuenta, sin importar el color de la tinta: la imagen pasa a gris con el
+        canal minimo min(B, G, R), donde una flecha azul, roja o verde sobre papel blanco queda oscura como
+        una negra. Probado con las senales del laboratorio en 6 colores: detecta el sentido correcto en
+        30-100 % de las fotos segun el color y la distancia (sin esto, 0-55 % las de color), nunca al reves;
+        algo mas de falsos positivos (0.2 % -> 2.8 % de las fotos); una senal igual se confirma con 2 fotos."""
         self.banco = Banco()
         self.color = color
+        self.forma = forma
         self.umbral, self.margen, self.margen_neg = umbral, margen, margen_neg
         self.min_lado, self.max_frac = min_lado, max_frac
         self.contraste = contraste            # tinta / papel: la tinta debe tener < 72 % del brillo del papel
@@ -352,6 +358,9 @@ class DetectorFlechas:
         return d, s[d], s[d] - s[OPUESTA[d]], neg
 
     def __call__(self, img):
+        if self.forma and img.ndim == 3:
+            mn = img.min(axis=2)
+            img = cv2.merge([mn, mn, mn])
         out = []
         for caja, comp in self.candidatos(img):
             c = self.clasificar(comp)

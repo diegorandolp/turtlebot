@@ -13,7 +13,7 @@ for p in (HERE, HERE.parent / "auto-1", HERE.parent / "slam-1", HERE.parents[1])
     sys.path.insert(0, str(p))
 
 from mundos import construir, imagen_qr                                   # noqa: E402
-from navegador import ACERCAR, IDA, LEER_QR, VOLVER, Carrera, Config        # noqa: E402
+from navegador import ACERCAR, FILA, IDA, LEER_QR, VOLVER, Carrera, Config        # noqa: E402
 from percepcion import Obs, Objetivo                                        # noqa: E402
 from qr import _de_que_cara, buscar_qrs                                     # noqa: E402
 from reconocimiento import Votacion                                         # noqa: E402
@@ -125,8 +125,9 @@ class Candidatas(unittest.TestCase):
         nav = navegador()
         for k in range(4):
             nav.ver_cara(0.1 * k, cara(0.1 * k, (2.0, 0.0), "Ana Uno"), 1.0)
-        self.assertEqual(nav.estado, IDA)
-        self.assertEqual(len(nav._mirar), 3)                        # izquierda, derecha y de vuelta
+        # ya se sabe que es otra: recorrer la fila de fotos (las de la meta estan juntas) en vez de irse
+        self.assertEqual(nav.estado, FILA)
+        self.assertGreaterEqual(len(nav._fila["puntos"]), 2)
 
 
 class Robustez(unittest.TestCase):
@@ -140,7 +141,7 @@ class Robustez(unittest.TestCase):
         nav.obj.t_ignorar = 100.0                                    # lo que hace _acercar tras 30 s sin verla
         nav.estado = IDA
         nav.ver_cara(50.0, cara(50.0, (0.0, 3.0), "Ana Uno", px=12), 1.0)   # otra cara lejos
-        self.assertEqual(nav.estado, IDA)
+        self.assertIn(nav.estado, (IDA, FILA))                       # puede revisar la fila, pero no ACERCAR
         nav.ver_cara(51.0, cara(51.0, (2.0, 0.45), "Caro Tres"), 1.0)      # la vuelve a ver: vale otra vez
         self.assertEqual(nav.estado, ACERCAR)
 
@@ -253,7 +254,7 @@ class PuntaAPunta(unittest.TestCase):
         self.assertTrue(r["exito"], r["log"][-4:])
         self.assertEqual(r["palabra"], m.qr)
         self.assertEqual(r["choques"], 0)
-        self.assertLess(r["tiempo"], 90)
+        self.assertLess(r["tiempo"], 150)            # croquis fiel: la buscada no es la primera
 
 
 class NombreEnGaleria(unittest.TestCase):
@@ -267,3 +268,39 @@ class NombreEnGaleria(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MundosDelLaboratorio(unittest.TestCase):
+    def test_lab_pone_la_meta_en_distintas_paredes(self):
+        paredes = set()
+        for k in range(1, 9):
+            m = construir(f"lab:{k}+6")
+            xs = {round(p[0], 1) for _, _, p in m.rostros}
+            ys = {round(p[1], 1) for _, _, p in m.rostros}
+            paredes.add("der" if len(xs) == 1 else ("arriba/abajo" if len(ys) == 1 else "?"))
+        self.assertIn("arriba/abajo", paredes)
+        self.assertIn("der", paredes)
+
+    def test_aspecto_del_laboratorio(self):
+        from mundos import CARTON, SUELO_LAB
+        m = construir("croquis+6")
+        self.assertEqual(m.suelo, SUELO_LAB)
+        self.assertTrue(any(tuple(int(c) for c in p.color) == CARTON for p in m.paredes
+                            if hasattr(p, "color")))
+
+
+class FlechasDeColor(unittest.TestCase):
+    def test_flecha_de_color_se_lee_por_su_forma(self):
+        """En el laboratorio las senales pueden ser de color: lo que cuenta es la forma."""
+        from flechas import DetectorFlechas
+        from mundos import COLORES_SENAL, textura_flecha
+        det = DetectorFlechas(forma=True)
+        ok = 0
+        for i, col in enumerate(COLORES_SENAL):
+            for d in ("izq", "der"):
+                tex = textura_flecha(d, np.random.default_rng(i), estilo="giro", color=col)
+                img = np.full((250, 250, 3), (95, 140, 178), np.uint8)            # pared de carton
+                img[160:] = 115                                                     # piso gris
+                img[100:150, 100:150] = cv2.resize(tex, (50, 50), interpolation=cv2.INTER_AREA)
+                ok += any(f.dir == d for f in det(cv2.GaussianBlur(img, (3, 3), 0)))
+        self.assertEqual(ok, 8)

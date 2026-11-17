@@ -72,6 +72,7 @@ class Mundo:
     persona: str = ""                       # nombre de la persona del cartel
     nombre: str = ""
     luz: float = 1.0                        # ganancia global de la iluminacion
+    suelo: float = 150.0                    # brillo del piso (el del laboratorio es gris medio: ~115)
     semilla: int = 0
     foto_b: str = ""                        # 'Carpeta/foto.jpg' de la galeria usada en el cartel
     fotos_excluir: tuple = ()               # todas las fotos de la galeria pegadas en el mundo (no se reconocen)
@@ -200,7 +201,7 @@ class Camara:
         gx = (x + dep / cosoff[None, :] * dx[None, :])
         gy = (y + dep / cosoff[None, :] * dy[None, :])
         tex = self._suelo[(gx * 4).astype(int) % 64, (gy * 4).astype(int) % 64]
-        base = 150 + 25 * np.exp(-dep / 3.0) + tex
+        base = g.m.suelo + 25 * np.exp(-dep / 3.0) + tex
         img[horizonte + 1:] = np.stack([base * 0.98, base, base * 1.02], -1)
         # superficies: todas las que corta cada rayo, de la mas lejana a la mas cercana
         capas = []                                                              # (t, tipo, indice, s)
