@@ -186,7 +186,7 @@ class AceptarQR(unittest.TestCase):
 
     def test_dos_lecturas_junto_a_la_buscada(self):
         nav = self.preparado()
-        c = cara(1.0, (2.0, 0.45), "Caro Tres")
+        c = cara(1.0, (2.0, 0.45), "Caro Tres", px=25)               # cara chica: 1 lectura no basta
         nav.ver_qr(1.0, qr(1.0, "milestone_ok", c))
         self.assertIsNone(nav.palabra)                              # una sola lectura no alcanza
         nav.ver_qr(1.2, qr(1.2, "milestone_ok", c))
@@ -203,9 +203,23 @@ class AceptarQR(unittest.TestCase):
             nav.ver_qr(1.1 + k, qr(1.1 + k, "milestone_vecina", buscada))
         self.assertIsNone(nav.palabra)
 
+    def test_una_lectura_con_la_cara_grande_y_clara_basta(self):
+        nav = self.preparado()                                      # en la Raspberry hay ~4 fotos por s: el
+        nav.ver_qr(1.0, qr(1.0, "milestone_phi", cara(1.0, (2.0, 0.45), "Caro Tres", px=51)))   # 19/11 se leyo 1 vez
+        self.assertEqual(nav.palabra, "milestone_phi")
+
+    def test_al_rendirse_usa_el_texto_leido_sin_rival(self):
+        nav = self.preparado()
+        nav.ver_qr(1.0, qr(1.0, "milestone_phi", cara(1.0, (2.0, 0.45), "Caro Tres", px=25)))
+        self.assertIsNone(nav.palabra)
+        nav._qr = dict(paso=0, t0=0.0, th0=0.0, t_ini=0.0)
+        nav._paso(nav.cfg.qr_max_s + 1.0, (0.0, 0.0, 0.0), None, None, 0, True)
+        self.assertEqual(nav.estado, VOLVER)
+        self.assertEqual(nav.palabra, "milestone_phi")
+
     def test_dos_textos_en_conflicto_necesitan_ventaja(self):
         nav = self.preparado()
-        b = cara(1.0, (2.0, 0.45), "Caro Tres")
+        b = cara(1.0, (2.0, 0.45), "Caro Tres", px=25)
         nav.ver_qr(1.0, qr(1.0, "milestone_a", b))
         nav.ver_qr(1.1, qr(1.1, "milestone_b", b))
         nav.ver_qr(1.2, qr(1.2, "milestone_a", b))

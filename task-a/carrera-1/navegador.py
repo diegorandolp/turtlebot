@@ -81,6 +81,7 @@ class Config:
     #                                 del suelo: de muy cerca la cara sale cortada arriba y se reconoce mal)
     margen_qr: float = 0.08         # el QR cuenta si su cara se reconoce como la buscada con esta ventaja (coseno)
     qr_max_s: float = 30.0          # s maximos frente a la foto buscando el QR (despues vuelve igual)
+    px_qr_1: float = 35.0           # px: con la cara asi de grande (y clara) basta leer el QR 1 vez
 
 
 # arcos que prueba la ventana dinamica: 6 velocidades de 0 a vmax y 19 giros, mantenidos 1.2 s
@@ -659,11 +660,12 @@ class Carrera:
             return
         texto, n = orden[0]
         n2 = orden[1][1] if len(orden) > 1 else 0
-        if n >= 2 and n - n2 >= 2:
+        clara = r.nombre == self.cfg.buscar and cara.px >= self.cfg.px_qr_1 and r.margen >= 2 * self.cfg.margen_qr
+        if (n >= 2 and n - n2 >= 2) or (n == 1 and n2 == 0 and clara):
             for k in self.candidatas:                               # la foto activa: la buscada (para dibujar)
                 if k.estado == "objetivo" and self.obj is not k and self.estado != LEER_QR:
                     self.obj, self.vot = k, k.vot
-            self._aceptar_qr(now, texto, f"leido {n} veces")
+            self._aceptar_qr(now, texto, f"leido {n} veces" if n >= 2 else f"leido 1 vez, cara de {cara.px:.0f} px")
 
     def _aceptar_qr(self, now, texto, como):
         self.palabra = texto
@@ -706,6 +708,9 @@ class Carrera:
         (anunciara el nombre)."""
         f = self._qr
         if now - f["t_ini"] > self.cfg.qr_max_s:
+            orden = sorted(((t, n) for t, n in self._qr_votos.items() if t not in self._qr_otros), key=lambda kv: -kv[1])
+            if len(orden) == 1 or (len(orden) > 1 and orden[0][1] > orden[1][1]):
+                return self._aceptar_qr(now, orden[0][0], f"el mas leido ({orden[0][1]}) al rendirme") and (0.0, 0.0)
             self.nota(now, f"no pude leer el QR en {self.cfg.qr_max_s:.0f} s: vuelvo y anuncio el nombre")
             self.estado = VOLVER
             self._reset_ruta()

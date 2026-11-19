@@ -321,7 +321,7 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
     reloc = None if getattr(args, "sin_relocalizar", False) else Relocalizador()
     pendientes, t_cam, t_scan = [], 0.0, 0.0
     fotos, ultima, last_rx = 0, None, None
-    anunciado, t_hecho = False, None
+    anunciado, t_hecho, t_decir, texto = False, None, 0.0, ""
     t0 = reloj()
     vista = None
     grab, v, w, pos = None, 0.0, 0.0, (0.0, 0.0, 0.0)
@@ -424,10 +424,11 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
                 if not args.mudo:                                        # la voz no lee bien "_" ni "-"
                     anunciar(texto.replace("_", " ").replace("-", " "), imprimir=False)
                 senal_robot(robot, "hecho" if (nav.palabra or nav.nombre) else "fallo")
-                if hasattr(robot, "decir"):                              # a todas las PC conectadas al puente
-                    robot.decir(f"ANUNCIO: {texto}")
                 if args.resultado_archivo:                               # en el robot: queda escrito aunque no haya PC
                     Path(args.resultado_archivo).write_text(texto + "\n", encoding="utf-8")
+            if t_hecho is not None and hasattr(robot, "decir") and now >= t_decir:
+                robot.decir(f"ANUNCIO: {texto}")                         # a todas las PC conectadas al puente; UDP
+                t_decir = now + 0.4                                      # puede perder un paquete: se repite ~3 s
             # ---- ventana (y video) ----
             grabar = grab is not None and grab.toca(now)
             if gui or grabar or (args.png and nav.estado == HECHO):
@@ -466,7 +467,7 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
                     nav.empezar(now, pos[2])
                     senal_robot(robot, "salida")
                     print(f"[go] salida dada; busco a {nav.cfg.buscar or '(la unica foto)'}", flush=True)
-            if t_hecho is not None and (not gui or sim) and now - t_hecho > 1.0:
+            if t_hecho is not None and (not gui or sim) and now - t_hecho > (1.0 if sim else 3.0):
                 break
             if nav.t_inicio is not None and now - nav.t_inicio > max_t:
                 nav.nota(now, "tiempo maximo: me rindo")
@@ -623,9 +624,15 @@ def main(argv=None):
         from tb4 import TB4Client
         with TB4Client(args.ip) as robot:
             robot.wait_ready(8)
-            if args.undock:
+            st = robot.status()
+            if args.undock and st is not None and st.docked is False:
+                print("[ok] no esta en el dock: arranco desde aqui")
+            elif args.undock:
                 print("[..] sacando del dock (retrocede solo: deja espacio detras) ...")
-                print("[ok]", robot.undock())
+                try:
+                    print("[ok]", robot.undock())
+                except (RuntimeError, TimeoutError) as e:
+                    print("[aviso] undock:", e, "- sigo desde donde esta")
             print("[ok] listo. Ventana enfocada: g = empezar, espacio = pausa, q = salir.")
             res = correr(robot, args, sim=False, gui=not args.no_gui, max_t=args.max_t)
     if not args.no_guardar:
