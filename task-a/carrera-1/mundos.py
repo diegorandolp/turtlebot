@@ -32,12 +32,18 @@ PX_M = 900                                  # px de textura por metro de cartel
 
 # ---------------------------------------------------------------- texturas
 
-def textura_rostro(foto, ancho_m, rng):
-    """Foto impresa: la imagen sobre papel blanco con un margen pequeno."""
+def textura_rostro(foto, ancho_m, rng, max_aspecto=None):
+    """Foto impresa: la imagen sobre papel blanco con un margen pequeno. `max_aspecto` (alto/ancho): recorta
+    arriba y abajo una foto mas alta que eso (como las impresiones del 19/11, casi cuadradas)."""
     img = cv2.imread(str(foto))
     if img is None:
         raise FileNotFoundError(foto)
     h, w = img.shape[:2]
+    if max_aspecto and h > max_aspecto * w:
+        hh = int(max_aspecto * w)
+        y0 = int(np.clip(0.42 * h - hh / 2, 0, h - hh))                  # la cara suele estar arriba del centro
+        img = img[y0:y0 + hh]
+        h = hh
     alto_m = ancho_m * h / w
     W, H = int(ancho_m * PX_M), int(alto_m * PX_M)
     m = max(4, int(0.04 * W))
@@ -79,7 +85,9 @@ def textura_rostro_qr(foto, ancho_m, rng, texto, qr_m=0.10, esquina=None):
 # Cajas del laboratorio como se vieron con la camara del robot el 19/11: carton mas gris que naranja, con
 # logos y letras impresas (Tambo, San Jose...), cinta, etiquetas amarillas y codigos de barra. Las letras y
 # los iconos "este lado arriba" son los que dieron candidatas falsas de flecha en el robot.
-ANCHO_FOTO = (0.12, 0.16)  # m: las fotos impresas del 19/11 median ~10-15 cm de ancho (la cara, ~5 cm)
+ANCHO_FOTO = (0.10, 0.13)  # m: las fotos impresas del 19/11 median ~10-13 cm de ancho (la cara, ~5 cm)
+# Alturas medidas en el video del 19/11: el QR casi en el piso (0-8 cm) y la foto justo encima (9-22 cm): la
+# cara queda a ~15-20 cm, a la altura de la camara (13 cm), y se ve aun de cerca
 PALABRAS_CAJA = ["TAMBO", "SAN JOSE", "Suavecito", "FRAGIL", "VT2", "GLORIA", "LUCKY", "ARROZ", "LECHE",
                  "ESTE LADO", "PERU", "MANI", "INKA", "500 g", "x 12", "KR", "PAMPA", "COSTENO"]
 TINTAS_CAJA = [(40, 40, 150), (30, 30, 30), (120, 60, 30), (40, 110, 40), (60, 60, 160), (90, 50, 110)]
@@ -155,15 +163,15 @@ def carteles_foto_qr(a, b, centro_s, foto, ancho_foto, rng, texto, z_qr=None, ga
     """La foto impresa con la hoja del QR DEBAJO y centrada (asi las pegamos el 19/11 y el profe dijo que esta
     bien): dos carteles en la pared a->b, centrados en la fraccion `centro_s`. -> ([cartel_foto, cartel_qr],
     z de arriba de la foto)."""
-    tex_f, alto_f = textura_rostro(foto, ancho_foto, rng)
+    tex_f, alto_f = textura_rostro(foto, ancho_foto, rng, max_aspecto=1.2)
     marco = 0.006                                                            # margen blanco de la hoja del QR
     N = int((lado_qr + 2 * marco) * PX_M)
     q = imagen_qr(texto, N - 2 * int(marco * PX_M))
     hoja = np.full((N, N, 3), 245, np.uint8)
     o = int(marco * PX_M)
     hoja[o:o + q.shape[0], o:o + q.shape[1]] = q
-    z_qr = float(rng.uniform(0.02, 0.06)) if z_qr is None else z_qr
-    gap = float(rng.uniform(0.0, 0.02)) if gap is None else gap
+    z_qr = float(rng.uniform(0.0, 0.02)) if z_qr is None else z_qr
+    gap = float(rng.uniform(0.0, 0.01)) if gap is None else gap
     alto_q = lado_qr + 2 * marco
     k_q = cartel_en_pared(a, b, centro_s, alto_q, z_qr, alto_q, hoja, "qr")
     z_f = z_qr + alto_q + gap
@@ -560,7 +568,7 @@ def _sala_con_cajas(W, H, cajas, inicio, t_b, rng, persona, nombre_mundo, semill
     if elegidas[k_obj][0] != (persona or elegidas[k_obj][0]):
         raise ValueError(f"no se pudo poner a {persona} en la meta")
     carteles, rostros, textos = [], [], set()
-    z_qr = float(rng.uniform(0.02, 0.06))                                 # misma altura para toda la fila
+    z_qr = float(rng.uniform(0.0, 0.02))                                 # misma altura para toda la fila
     sep_real = abs(ts[1] - ts[0]) if len(ts) > 1 else 1.0
     for (nombre, foto), t in zip(elegidas, ts):
         tq = texto_qr(rng)
@@ -886,7 +894,7 @@ def tubo(semilla, persona=None, n_rostros=5, sep=None, giros=None, ramas=None, f
         usadas.add(nombre)
         gente.append((nombre, foto))
     rostros, textos = [], set()
-    z_qr = float(rng.uniform(0.02, 0.06))
+    z_qr = float(rng.uniform(0.0, 0.02))
     boca = c0 - ud * h                                                    # t = 0: donde empieza el tubo
     for (nombre, foto), (t, lado) in zip(gente, elegidos):
         tq = texto_qr(rng)
@@ -908,12 +916,93 @@ def tubo(semilla, persona=None, n_rostros=5, sep=None, giros=None, ramas=None, f
                  qr=rostros[k_obj][1], rostros=rostros, suelo=SUELO_LAB)
 
 
+COLORES_NOMBRE = {"negra": COLORES_SENAL[0], "azul": COLORES_SENAL[1], "roja": COLORES_SENAL[2], "verde": COLORES_SENAL[3]}
+
+
+def desde_json(ruta, persona=None, semilla=0):
+    """Circuito dibujado con herramientas/editor_mapas.html (JSON): paredes (segmentos), cajas (rectangulos),
+    salida A (x, y, rumbo), senales y fotos pegadas a una pared (punto x, y y normal nx, ny hacia el pasillo).
+    Fotos sin persona: alguien al azar (distinto); sin ninguna marcada como buscada: una al azar. Las fotos
+    llevan su QR debajo, como en el laboratorio."""
+    import json
+    ruta = Path(ruta)
+    if not ruta.is_absolute() and not ruta.exists():
+        ruta = HERE / ruta
+    d = json.loads(Path(ruta).read_text(encoding="utf-8"))
+    rng = np.random.default_rng(semilla)
+    paredes = [Pared(tuple(map(float, w["a"])), tuple(map(float, w["b"])), float(w.get("alto", 0.42)), CARTON)
+               for w in d.get("paredes", [])]
+    for c in d.get("cajas", []):
+        x0, y0, x1, y1 = (float(c[k]) for k in ("x0", "y0", "x1", "y1"))
+        col = tuple(int(np.clip(v * rng.uniform(0.85, 1.12), 0, 255)) for v in CARTON)
+        _caja(paredes, ((x0 + x1) / 2, (y0 + y1) / 2), (x1 - x0) / 2, (y1 - y0) / 2, float(c.get("alto", 0.4)), col)
+    if not paredes:
+        raise ValueError(f"{ruta}: el circuito no tiene paredes")
+    texturizar(paredes, rng)
+    if not d.get("inicio"):
+        raise ValueError(f"{ruta}: falta la salida A")
+    inicio = tuple(float(v) for v in d["inicio"])
+
+    def ab(item, ancho):
+        p, n = np.array([item["x"], item["y"]], float), np.array([item["nx"], item["ny"]], float)
+        n /= max(float(np.linalg.norm(n)), 1e-9)
+        u = np.array([n[1], -n[0]])                                     # a->b con la normal a la izquierda
+        return p - u * ancho / 2, p + u * ancho / 2
+
+    carteles = []
+    for s_ in d.get("senales", []):
+        lado = 0.20
+        a, b = ab(s_, 0.8)
+        tex = textura_flecha(s_.get("dir", "der"), rng, estilo="giro", lado_m=lado,
+                             color=COLORES_NOMBRE.get(s_.get("color", "negra"), COLORES_SENAL[0]))
+        carteles.append(cartel_en_pared(a, b, 0.5, lado, float(s_.get("z0", 0.05)), lado, tex, "flecha:" + s_.get("dir", "der")))
+    fotos = d.get("fotos", [])
+    if not fotos:
+        raise ValueError(f"{ruta}: no hay fotos")
+    marcadas = [i for i, f in enumerate(fotos) if f.get("buscada")]
+    k_obj = marcadas[0] if marcadas else int(rng.integers(len(fotos)))
+    fijas = {f.get("persona") for f in fotos if f.get("persona")}
+    if persona and not marcadas:
+        fotos = [dict(f) for f in fotos]
+        fotos[k_obj]["persona"] = persona
+        fijas.add(persona)
+    gente, usadas = [], set(fijas)
+    for f in fotos:
+        if f.get("persona"):
+            gente.append(elegir_persona(rng, f["persona"]))
+            continue
+        for _ in range(60):
+            nombre, foto = elegir_persona(rng)
+            if nombre not in usadas:
+                break
+        usadas.add(nombre)
+        gente.append((nombre, foto))
+    rostros, textos = [], set()
+    for (nombre, foto), f in zip(gente, fotos):
+        tq = texto_qr(rng)
+        while tq in textos:
+            tq = texto_qr(rng)
+        textos.add(tq)
+        a, b = ab(f, 0.6)
+        ks, _ = carteles_foto_qr(a, b, 0.5, foto, float(rng.uniform(*ANCHO_FOTO)), rng, tq)
+        carteles += ks
+        rostros.append((nombre, tq, (float(f["x"]), float(f["y"]))))
+    nombre_obj, foto_obj = gente[k_obj]
+    return Mundo(paredes, inicio, carteles, [], rostros[k_obj][2], nombre_obj, f"mapa:{ruta.stem}+{len(rostros)}",
+                 luz=float(rng.uniform(0.85, 1.1)), semilla=semilla, foto_b=ref_foto(foto_obj),
+                 fotos_excluir=tuple(ref_foto(f) for _, f in gente), qr=rostros[k_obj][1], rostros=rostros,
+                 suelo=SUELO_LAB)
+
+
 def construir(nombre, persona=None):
     """Mundos: demo | demo-sin-flechas | sala[:N] | aleatorio:N[:sin] | croquis[:W:H] | denso:N[:W:H] | lab:N
     (lab = sala con cajas y la meta en la pared de la derecha, arriba o abajo) | laberinto:N[:C:F] (laberinto
     largo de C x F celdas de 0.8 m, defecto 7 x 6; con :celda, otro ancho: laberinto:1:6:5:0.7).
     Con "+K" al final (solo croquis y denso), la meta tiene K fotos con QR: p. ej. croquis+6, denso:3+6.
     "+K:S" fija la separacion entre fotos en S m (defecto 0.40-0.55 al azar): denso:3+6:0.3 = mas juntas."""
+    if nombre.startswith("mapa:"):                               # mapa:ruta.json[@semilla] (editor_mapas.html)
+        ruta, _, sem = nombre[5:].partition("@")
+        return desde_json(ruta, persona, int(sem) if sem else 0)
     n_rostros, sep, nombre_orig = 1, None, nombre
     if "+" in nombre:
         nombre, k = nombre.split("+", 1)

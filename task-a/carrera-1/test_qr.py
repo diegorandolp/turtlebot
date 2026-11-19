@@ -434,6 +434,36 @@ class DecidirRapido(unittest.TestCase):
         self.assertEqual(nav.palabra, "milestone_x")
 
 
+    def test_qr_sin_cara_entre_dos_fotos_no_se_acepta(self):
+        """Revision del PR: un QR visto sin cara a mitad de camino de una foto vecina es ambiguo: no cuenta."""
+        nav = navegador()
+        for k in range(4):
+            nav.ver_cara(0.1 * k, cara(0.1 * k, (2.0, 0.0), "Caro Tres"), 1.0)
+        for k in range(4):
+            nav.ver_cara(1 + 0.1 * k, cara(1 + 0.1 * k, (2.0, 0.42), "Ana Uno"), 1.0)
+        nav.estado = LEER_QR
+        nav.obj = nav.candidatas[0]
+        nav.vot = nav.obj.vot
+        for t in (2.0, 2.2, 2.4):
+            nav.ver_qr(t, Obs("qr", t, 0.0, 0.5, (2.0, 0.2), 60, (0, 0, 60, 60), texto="milestone_vecina", cara=None))
+        self.assertIsNone(nav.palabra)
+        for t in (3.0, 3.2):                                          # de costado (25 grados): tampoco
+            nav.ver_qr(t, Obs("qr", t, 0.44, 0.5, (2.0, 0.02), 60, (0, 0, 60, 60), texto="milestone_x", cara=None))
+        self.assertIsNone(nav.palabra)
+
+    def test_punto_de_la_fila_no_alcanzado_no_cuenta_como_mirado(self):
+        """Revision del PR: si un punto de la fila se pasa por tiempo sin llegar, no se puede decidir por ranking."""
+        nav = navegador()
+        nav._fila = dict(puntos=[(5.0, 5.0, 0.0, 5.5, 5.0, 0)], t_punto=0.0, mirando_desde=None, completa=True, vacios={})
+        nav.estado = FILA
+        t = 11.0                                                       # paso el tiempo, el robot sigue en (0, 0)
+        for _ in range(40):
+            nav._recorrer_fila(t, (0.0, 0.0, 0.0), None)
+            t += 0.1
+        self.assertEqual(nav._fila_vistos, [])
+        self.assertFalse(nav._fila_completa)
+
+
 class Tubo(unittest.TestCase):
     """El circuito del 19/11 y lo que dijo el profe: fotos en los costados del callejon final, nunca al fondo."""
 

@@ -287,6 +287,8 @@ class SafetyConfig:
     clear_dist: float = 0.38      # histeresis: vuelve a permitir avanzar por encima de esto
     slow_dist: float = 0.60       # por debajo, la velocidad maxima baja en proporcion
     min_slow_speed: float = 0.05  # velocidad minima permitida dentro de la zona lenta
+    slow_ref: float = 0.31        # m/s: tope dentro de la zona lenta = slow_ref * fraccion. Fijo en el de fabrica:
+                                  # con --max-linear 0.46 (turbo) cerca de las paredes se va igual que antes
     scan_timeout: float = 0.5     # s; sin LiDAR reciente no se permite avance ni retroceso
 
 
@@ -309,7 +311,7 @@ class SafetyFilter:
         c = self.cfg
         if dist < c.slow_dist:
             frac = (dist - c.stop_dist) / max(1e-6, c.slow_dist - c.stop_dist)
-            return min(speed, max(c.min_slow_speed, c.max_linear * frac))
+            return min(speed, max(c.min_slow_speed, min(c.max_linear, c.slow_ref) * frac))
         return speed
 
     def apply(self, v, w, front, rear, scan_age):

@@ -111,7 +111,8 @@ def armar(args, excluir=()):
         print(f"[ok] busco a {buscar}; lector de QR: {lector()}"
               + ("" if lector() == "wechat" else " (con opencv-contrib-python se lee desde mas lejos)"))
     # > 0.31 m/s solo con `safety_override: full` en la Create 3 (ver README, "Mas rapido en las rectas")
-    cfg = Config(vmax=args.vel, vmax_vuelta=min(max(0.31, args.vel), args.vel + 0.02), temprano=args.temprano,
+    vuelta = 0.45 if getattr(args, "turbo", False) else min(max(0.31, args.vel), args.vel + 0.02)
+    cfg = Config(vmax=args.vel, vmax_vuelta=vuelta, temprano=args.temprano,
                  usar_flechas=not args.sin_flechas, buscar=buscar, leer_qr=not args.sin_qr,
                  n_fotos=getattr(args, "n_fotos", 0) or 0)
     pl_fino = Planner(MAP_M, MAP_PX, cell=2, robot_radius=0.10, margin=0.0)
@@ -569,6 +570,10 @@ def parse(argv=None):
     ap.add_argument("--resultado-archivo", default=None, metavar="RUTA", help="escribir el anuncio en este archivo al terminar")
     ap.add_argument("--undock", action="store_true", help="sacar del dock al empezar (retrocede solo)")
     ap.add_argument("--vel", type=float, default=0.30, help="velocidad maxima en m/s (defecto 0.30; el robot llega a 0.31)")
+    ap.add_argument("--turbo", action="store_true",
+                    help="vuelta (camino ya conocido) a 0.45 m/s en las rectas y doblando en curva. En el robot hace "
+                         "falta robot/preparar.sh --rapido (safety_override full + puente a 0.46); sin eso la Create 3 "
+                         "se queda en 0.31 (no pasa nada)")
     ap.add_argument("--temprano", action="store_true", help="volver apenas se sabe quien es (sin terminar de acercarse a B)")
     ap.add_argument("--sin-flechas", action="store_true", help="ignorar las flechas")
     ap.add_argument("--flechas-color", action="store_true", help="(con --flechas-solo-negras) aceptar tambien tinta de color")
@@ -630,7 +635,8 @@ def crear_sim(args):
     robot = SimRobot(mundo, hfov=args.hfov, camara_ok=not args.camara_caida,
                      foto_hd=(1280, 720, args.hfov_hd) if hd else None,
                      odom_ruido=args.odom_ruido, odom_sesgo=args.odom_sesgo, cam_nn=args.cam_nn,
-                     velo=getattr(args, "velo", 0.0), exposicion=getattr(args, "exposicion", 0.0))
+                     velo=getattr(args, "velo", 0.0), exposicion=getattr(args, "exposicion", 0.0),
+                     vmax_puente=0.46 if (getattr(args, "turbo", False) or args.vel > 0.31) else 0.31)
     return mundo, robot
 
 

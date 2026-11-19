@@ -321,7 +321,8 @@ class SimRobot:
     """Mismo API que TB4Client, con tiempo simulado (advance)."""
 
     def __init__(self, mundo, hfov=42.0, odom_ruido=0.01, odom_sesgo=0.0, semilla=1, camara_ok=True,
-                 acel=1.0, acel_w=4.0, foto_hd=None, freno=True, cam_nn=False, velo=0.0, exposicion=0.0):
+                 acel=1.0, acel_w=4.0, foto_hd=None, freno=True, cam_nn=False, velo=0.0, exposicion=0.0,
+                 vmax_puente=0.31):
         """foto_hd = (ancho, alto, hfov) de la camara grande (photo(hd=True)); freno=False si delante va el
         puente real (robot_ros_sim.py), que ya aplica el freno."""
         self.freno = freno
@@ -345,7 +346,7 @@ class SimRobot:
         self.time = 0.0
         self.cmd, self.cmd_t = (0.0, 0.0), -1e9
         self.angles = np.linspace(-math.pi, math.pi, 720, endpoint=False)
-        self.safety = P.SafetyFilter(P.SafetyConfig())
+        self.safety = P.SafetyFilter(P.SafetyConfig(max_linear=vmax_puente))   # 0.46: safety_override + --max-linear
         self.flags = 0
         self.path = [(self.wx, self.wy)]
         self.collisions = 0

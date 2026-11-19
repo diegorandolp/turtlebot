@@ -43,7 +43,13 @@ SSH=(ssh -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new)
 if [ -n "${SSHPASS:-}" ] && command -v sshpass >/dev/null; then
   SSH=(sshpass -e "${SSH[@]}")
 fi
-PY="$(command -v python3 || command -v python)"
+PY="${PYTHON:-}"
+if [ -z "$PY" ]; then     # el mismo criterio que tb4_inicio.sh: el python que tenga numpy (en Git Bash "python3"
+  for c in python python3 py; do   # suele ser el atajo de la Microsoft Store, sin numpy)
+    if command -v "$c" >/dev/null && "$c" -c "import numpy" 2>/dev/null; then PY="$c"; break; fi
+  done
+  PY="${PY:-python3}"
+fi
 ROS="source /etc/turtlebot4/setup.bash"
 
 paso() { echo; echo "== $*"; }

@@ -91,10 +91,10 @@ class Config:
     px_temprana: float = 24.0       # px (a 24 px el reconocimiento acierta ~96 % por foto, 97 % por voto)
     n_fotos: int = 0                # fotos en la meta si se sabe (0 = no se sabe): vistas todas, se elige por ranking
     mirar_s: float = 1.1            # s quieto en cada punto de la fila (la Raspberry toma ~2 fotos por s)
-    d_vista_fila: tuple = (0.62, 0.55, 0.7, 0.5)    # m de la pared para mirar cada foto de la fila (preferidas
-                                    # primero). Fotos chicas (cara ~5 cm): a 0.62 m la cara mide ~26 px. Mas cerca
-                                    # la camara (a 13 cm del suelo, horizontal) ya no ve la parte de arriba de la
-                                    # foto: a 0.4 m la cara de un retrato de medio cuerpo queda fuera
+    d_vista_fila: tuple = (0.5, 0.45, 0.55, 0.62)   # m de la pared para mirar cada foto de la fila (preferidas
+                                    # primero). Fotos chicas (cara ~5 cm): a 0.5 m la cara mide ~33 px. Las fotos van
+                                    # bajas (QR en el piso, foto hasta ~25 cm: medido el 19/11) y la camara (13 cm)
+                                    # las ve enteras aun a 0.35 m. Banco: 0.5 m 19/25 y 112 s, 0.62 m 17/25 y 125 s
     v_fila: float = 0.25            # m/s entre puntos de la fila
     rank_p: float = 0.5             # ranking: la mas parecida necesita p >= esto...
     rank_ventaja: float = 4.0       # ...y esta ventaja (veces) sobre la segunda
@@ -744,8 +744,8 @@ class Carrera:
     def _recorrer_fila(self, now, pos, mapa):
         f = self._fila
         if not f or not f["puntos"]:
-            if f and f.get("completa"):
-                self._fila_completa = True                         # se miraron todas las paredes de la meta
+            if f and f.get("completa") and not f.get("incompleta"):
+                self._fila_completa = True                         # se miraron (de verdad) todas las paredes
             self._fila = None
             self.estado = IDA
             self.t_nuevo = now
@@ -768,12 +768,18 @@ class Carrera:
             self._prog = None                                       # girar y mirar no es estar atascado
             err = wrap(rumbo - th)
             if f["mirando_desde"] is None:
+                if "llego" not in f:
+                    f["llego"] = d < 0.5                            # (por tiempo y lejos: ese tramo no se vio bien)
                 if abs(err) > 0.12 and now - f["t_punto"] < 14.0:
                     return 0.0, float(np.clip(2.2 * err, -1.8, 1.8))
                 f["mirando_desde"] = now
             if now - f["mirando_desde"] < self.cfg.mirar_s:        # quieto mirando la pared (2 fotos en la Pi)
                 return 0.0, 0.0
-            self._fila_vistos.append((px, py) if wx is None else (wx, wy))
+            if f.pop("llego", True):
+                self._fila_vistos.append((px, py) if wx is None else (wx, wy))
+            else:
+                f["incompleta"] = True                             # no se llego: no cuenta como mirado (otra fila lo
+                                                                   # reintenta) y no vale decidir por ranking
             f["puntos"].pop(0)
             if f.get("replanear"):
                 f["replanear"] = False
@@ -813,9 +819,9 @@ class Carrera:
         cara = o.cara
         if cara is None and self.estado == LEER_QR and self.obj is not None and self.obj.xy is not None \
                 and self.obj.estado == "objetivo" and self.vot.lider()[0] == self.cfg.buscar \
-                and math.hypot(o.xy[0] - self.obj.xy[0], o.xy[1] - self.obj.xy[1]) < 0.4:
+                and self._qr_es_de_la_buscada(o):
             # de cerca la camara (a 13 cm del suelo) ve el QR pero ya no la cara de arriba: frente a la foto ya
-            # reconocida, un QR justo debajo de ella (< 0.3 m en el mapa) es el suyo. Necesita 2 lecturas
+            # reconocida, un QR justo debajo de ella es el suyo. Necesita 2 lecturas
             if o.texto not in self._qr_votos:
                 self.nota(now, f"QR debajo de la foto #{self.obj.id} ({self.cfg.buscar}): '{o.texto}'")
             self._qr_votos[o.texto] = self._qr_votos.get(o.texto, 0) + 1
@@ -851,6 +857,20 @@ class Carrera:
                 if k.estado == "objetivo" and self.obj is not k and self.estado != LEER_QR:
                     self.obj, self.vot = k, k.vot
             self._aceptar_qr(now, texto, f"leido {n} veces" if n >= 2 else f"leido 1 vez, cara de {cara.px:.0f} px")
+
+    def _qr_es_de_la_buscada(self, o):
+        """Un QR visto sin cara al lado es de la buscada solo si no hay duda con una foto vecina (las fotos van a
+        0.40-0.55 m): de frente (a menos de 10 grados del centro de la imagen: en LEER_QR el robot mira a la
+        buscada), a menos de 0.25 m de ella en el mapa y al menos 0.15 m mas cerca de ella que de cualquier otra
+        candidata."""
+        if abs(o.rumbo) > math.radians(10):
+            return False
+        d_obj = math.hypot(o.xy[0] - self.obj.xy[0], o.xy[1] - self.obj.xy[1])
+        if d_obj > 0.25:
+            return False
+        otras = [math.hypot(o.xy[0] - c.xy[0], o.xy[1] - c.xy[1]) for c in self.candidatas
+                 if c is not self.obj and c.xy is not None]
+        return not otras or min(otras) > d_obj + 0.15
 
     def _aceptar_qr(self, now, texto, como):
         self.palabra = texto
@@ -1422,7 +1442,11 @@ class Carrera:
             self.t_ruta = now
             self.ruta = self._ruta_hacia(mapa, (x, y), destino, modos)
         exacta = modos[self.modo_ruta] == "ida exacta"
-        resta, meta = self._seguir(x, y, adelante=0.35 if exacta else 0.6)
+        # mirar mas adelante en la ruta cuanto mas rapido se va: la esquina se empieza a doblar antes y en
+        # curva, sin frenar en seco (a 0.45 m/s mira ~1 m adelante). La ventana dinamica sigue revisando que
+        # el arco no pase cerca de nada, asi que cortar la esquina nunca la acerca a la pared
+        adelante = 0.35 if exacta else 0.6 + 1.6 * max(0.0, vmax - 0.2)
+        resta, meta = self._seguir(x, y, adelante=adelante)
         if exacta:
             vmax = min(vmax, 0.18)                              # por donde paso, despacio y sin cortar esquinas
         if math.hypot(x - destino[0], y - destino[1]) < 0.6:
