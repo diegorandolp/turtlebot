@@ -221,12 +221,29 @@ La primera carrera dentro de la Raspberry (19/11) y lo que dijo el profe cambiar
   HD solo si en 5 s no se leyó (en la Pi cada HD tarda ~4 s y antes se pedía al acercarse). Un QR justo debajo
   de la buscada cuenta aunque la cara ya no entre en la foto (2 lecturas). Sin flechas en la HD frente a la meta.
 
+**Circuitos a mano: `herramientas/editor_mapas.html`.** Se abre en el navegador (doble clic): se dibujan
+paredes y cajas sobre una rejilla de 10 cm, la salida A, las señales (dirección y color) y las fotos (persona
+fija o al azar, cuál es la buscada), pegadas a la pared más cercana. "Descargar" o "Copiar" da el JSON; se
+guarda en `task-a/carrera-1/mis_mapas/` y se corre con `--mundo mapa:mis_mapas/<nombre>.json` (también en
+`banco_pruebas.py --mundos mapa:mis_mapas/a.json mapa:mis_mapas/a.json@2 ...`; `@N` = otra semilla: otras
+personas al azar y otros QR). Ejemplo: `mis_mapas/ejemplo_19_11.json`.
+
+**Vuelta rápida: `--turbo`.** En la vuelta (camino ya conocido) va a 0.45 m/s y mira más adelante en la ruta
+(0.6 m + 1.6 × (v − 0.2): ~1 m a 0.45 m/s), así empieza a doblar antes y en curva en vez de frenar en la esquina
+(la ventana dinámica sigue revisando cada arco contra el LiDAR). En el robot necesita `robot/preparar.sh --rapido`
+(sin eso la Create 3 se queda en 0.31 y no pasa nada); en el robot: `CARRERA_ARGS="--turbo"`.
+
 **Resultados** (simulador, tiempos de la Pi, límite 3 min, 0 nombres y 0 palabras equivocadas):
 
 | Banco | Antes (código del 19/11) | Ahora |
 |---|---|---|
 | `tubo:1..12` (5 fotos en los costados) | 5/12 (42 %), mediana 134 s | **11/12 (92 %)**, mediana 121 s |
 | `tubo:1..16` + croquis + `lab:1..4+6` + `laberinto:1..3+4` | — | 19/24 (79 %), mediana 106 s |
+
+Con las fotos **bajas y chicas** como las del 19/11 (QR en el piso, foto hasta ~25 cm, 10–13 cm de ancho) y
+mirando la fila desde 0.5 m: 25 mundos (tubo 1–16, croquis, lab 1–4, laberinto 1–3, `mapa:ejemplo_19_11`)
+**19/25 (76 %), mediana 112 s** con `--turbo`; `--turbo` baja la vuelta de 17.1 s a 12.3 s de mediana
+(−28 %, 0 choques) sin cambiar la ida.
 
 Lo que sigue costando: recorrer la fila con fotos chicas lleva ~3.5 s por punto (girar, quedarse ~1.1 s para
 2 fotos, avanzar). Con el robot medir cuántas fotos por segundo da de verdad (`[camara] ms promedio` al final
