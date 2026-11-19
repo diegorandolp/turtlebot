@@ -48,10 +48,11 @@ case "$MODE" in
     for f in reconocimiento/modelos/yunet_2023mar.onnx reconocimiento/modelos/arcface_mbf.onnx reconocimiento/modelos/galeria_mbf.npz; do
       [ -f "$f" ] || { echo "[FALLA] falta $f (ver reconocimiento/README.md)"; exit 1; }
     done
-    echo "[..] copiando a $TARGET:~/$DIR (codigo + modelos, sin fotos ni corridas; ~20 MB)"
+    echo "[..] copiando a $TARGET:~/$DIR (codigo + modelos + 1 persona para medir_cpu, sin corridas; ~20 MB)"
     tar czf - --exclude='__pycache__' --exclude='corridas' --exclude='fotos' --exclude='mapas' --exclude='*.mp4' \
         --exclude='reconocimiento/modelos/*r50*' \
         tb4 reconocimiento task-a/slam-1 task-a/auto-1 task-a/carrera-1 requirements.txt robot/oakd_caras.json robot/oakd_caras.md \
+        datos/rostros/Thiago_Frias \
       | "${SSH[@]}" "$TARGET" "mkdir -p ~/$DIR && tar xzf - -C ~/$DIR && echo '[ok] copiado en ~/$DIR'"
     echo "Siguiente: $0 --instalar (solo la primera vez) y luego $0 --verificar"
     ;;
@@ -134,7 +135,11 @@ case "$MODE" in
     "${SSH[@]}" "$TARGET" "pgrep -af '[c]arrera-1/carrera.py' || echo 'la carrera NO esta corriendo'; tail -n 25 $LOG 2>/dev/null"
     ;;
   --parar)
-    "${SSH[@]}" "$TARGET" "pkill -f '[c]arrera-1/carrera.py' && echo 'carrera detenida' || echo 'no estaba corriendo'"
+    # SIGINT (como Ctrl+C): la carrera frena, cierra el video y guarda el registro. Si en 6 s no termino, SIGTERM
+    "${SSH[@]}" "$TARGET" "if pkill -INT -f '[c]arrera-1/carrera.py'; then \
+        for i in 1 2 3 4 5 6; do sleep 1; pgrep -f '[c]arrera-1/carrera.py' >/dev/null || break; done; \
+        pkill -f '[c]arrera-1/carrera.py'; echo 'carrera detenida (video y registro guardados)'; \
+      else echo 'no estaba corriendo'; fi"
     ;;
   --video)
     mkdir -p "$ROOT/corridas_robot"

@@ -44,18 +44,24 @@ Operación (lo que costó tiempo):
 - En el dock el power_saver apaga cámara y LiDAR: verificar y correr **fuera del dock**.
 - `--parar` mata la carrera y deja el video sin cerrar: mejor levantar el robot o usar el botón.
 
-Secuencia que funcionó (robot fuera del dock):
+Secuencia que funcionó (robot fuera del dock). Desde el 19/11 los 6 primeros pasos (y los arreglos del LiDAR y
+la cámara) están en **un solo script**, `robot/preparar.sh`:
 
 ```bash
-bash robot/tb4_inicio.sh
-bash robot/deploy_bridge.sh --bg
-bash task-a/camara/camara_rgb.sh --hd
-bash robot/desplegar_carrera.sh && bash robot/desplegar_carrera.sh --verificar
+bash robot/preparar.sh --undock                       # inicio, LiDAR, puente, cámara, copiar, verificar (--force: hora)
 bash robot/desplegar_carrera.sh --correr "Nombre Apellido"
 python robot/control_carrera.py 192.168.0.104        # START; imprime ANUNCIO
 bash robot/desplegar_carrera.sh --resultado           # la palabra, si no llegó a la PC
-bash robot/desplegar_carrera.sh --video
+bash robot/desplegar_carrera.sh --video               # (--parar ahora cierra el video y guarda el registro)
 ```
+
+A mano, lo mismo es: `tb4_inicio.sh` → (si no hay nodo del LiDAR) `sudo systemctl restart turtlebot4.service` →
+`deploy_bridge.sh --bg` → `camara_rgb.sh --hd` → `desplegar_carrera.sh` → `desplegar_carrera.sh --verificar`.
+Para `--vel 0.45`: `bash robot/preparar.sh --rapido` y `CARRERA_ARGS="--vel 0.45"`.
+
+Al final de cada carrera en el robot el log muestra `[camara] ms promedio (n): foto ..., foto_hd ..., proc ...,
+proc_qr_hd ...`: cuánto tarda pedir cada foto al puente y procesarla. Anotarlo: dice si los ~4 s de la HD son del
+puente o del procesado.
 
 Respuestas del profe (19/11): las fotos van **pegadas a los costados** del último tramo, nunca en la
 pared del fondo; el QR va como lo pusimos (debajo de la foto); solo cuentan los rostros subidos hasta
