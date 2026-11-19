@@ -102,7 +102,8 @@ class Percepcion:
             # la cara de una foto puede medir de 4 a 15 cm: el tamano casi no sirve, manda el LiDAR. Si el LiDAR
             # da menos, la foto no puede estar mas lejos (las cajas tapan igual a la camara, que va mas baja)
             rumbo, d, xy = self._ubicar(u, W, c.ancho, self.cara_m, pose, scan, dth, rango=(0.12, 1.6))
-            res = self.rec.resultado(img, c) if c.ancho >= self.min_px else None
+            # girando rapido la foto sale corrida (19/11): solo se ubica la cara, sin ArcFace (lo mas caro en la Pi)
+            res = self.rec.resultado(img, c) if c.ancho >= self.min_px and abs(w) < 1.0 else None
             caras.append(Obs("cara", t, rumbo, d, xy, c.ancho, c.caja, res=res,
                              borde_sup=c.caja[1] < 0.04 * H, girando=girando))
         cajas = [o.caja for o in caras]

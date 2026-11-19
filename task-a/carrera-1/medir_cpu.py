@@ -63,7 +63,7 @@ def main(argv=None):
         robot.wth = float(np.arctan2(cy - robot.wy, cx - robot.wx)) + (j - 4) * 0.03
         fotos.append(robot.photo(hd=a.hd))
     scan = robot.scan()
-    rec = Reconocedor("mbf")
+    rec = Reconocedor("mbf", espejo=False)                            # como la carrera
     det_fl = DetectorFlechas()
     caras = rec.det(fotos[4])
     print(f"maquina: {os.uname().machine}, {os.cpu_count()} nucleos, OpenCV {cv2.__version__}, hilos {a.hilos}")

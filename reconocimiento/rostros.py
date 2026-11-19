@@ -93,6 +93,9 @@ class Detector:
     YuNet pierde las caras de menos de ~20 px, y ampliando x2 recupera las de ~12-20 px."""
 
     def __init__(self, modelo=YUNET, umbral=0.6, nms=0.3, min_lado=500, max_lado=800):
+        # min_lado 500: la preview de 250 se agranda x2 antes de detectar (4 veces el calculo). A 320 cuesta 2.6
+        # veces menos y detecta igual las caras de >= 20 px, pero pierde las de 10-15 px: las fotos vistas de lejos
+        # desde el pasillo, que son las que avisan que llego a la meta (banco: 19/25 -> 13/25). Se queda en 500
         if not Path(modelo).exists():
             raise FileNotFoundError(f"Falta el modelo {modelo}")
         self.det = cv2.FaceDetectorYN.create(str(modelo), "", (320, 320), umbral, nms, 50)
@@ -163,21 +166,25 @@ def alinear(img, cara, size=112):
 class Embebedor:
     """ArcFace con cv2.dnn: cara alineada 112x112 BGR -> vector 512-D de norma 1."""
 
-    def __init__(self, modelo="mbf"):
+    def __init__(self, modelo="mbf", espejo=True):
+        """espejo: sumar el vector de la cara reflejada (un poco mas estable, el doble de calculo). Sin espejo
+        el acierto casi no cambia (dejando una foto fuera: 24 px 96.8 -> 95.0 % por foto, 95.5 % por voto en
+        los dos; 32 px 100 / 99.5 %): la carrera lo apaga, en la Raspberry ArcFace es lo mas caro."""
         path = Path(EMBEBEDORES.get(modelo, modelo))
         if not path.exists():
             raise FileNotFoundError(f"Falta el modelo de reconocimiento {path}")
         self.modelo = modelo
+        self.espejo = espejo
         self.net = cv2.dnn.readNetFromONNX(str(path))
 
     def __call__(self, caras112):
         out = []
         for im in caras112:                          # de a una: algunos ONNX fijan el lote en 1
-            blob = cv2.dnn.blobFromImages([im, cv2.flip(im, 1)], 1.0 / 127.5, (112, 112),
-                                          (127.5, 127.5, 127.5), swapRB=True)
+            ims = [im, cv2.flip(im, 1)] if self.espejo else [im]
+            blob = cv2.dnn.blobFromImages(ims, 1.0 / 127.5, (112, 112), (127.5, 127.5, 127.5), swapRB=True)
             self.net.setInput(blob)
             y = self.net.forward()
-            e = y[0] + y[1]                          # original + espejo
+            e = y.sum(axis=0)                        # original (+ espejo)
             out.append(e / (np.linalg.norm(e) + 1e-9))
         return np.array(out, np.float32).reshape(len(out), -1)
 
@@ -222,13 +229,13 @@ class Resultado:
 
 
 class Reconocedor:
-    def __init__(self, modelo="mbf", galeria=None, detector=None, excluir=()):
+    def __init__(self, modelo="mbf", galeria=None, detector=None, excluir=(), espejo=True):
         """modelo: 'mbf' | 'r50' | 'auto'. `excluir`: archivos de la galeria a ignorar ('Carpeta/foto.jpg');
         el simulador pone en B una foto de la galeria y la excluye: una foto que el reconocedor nunca vio."""
         modelo = modelo_auto() if modelo == "auto" else modelo
         self.modelo = modelo
         self.det = detector or Detector()
-        self.emb = Embebedor(modelo)
+        self.emb = Embebedor(modelo, espejo=espejo)
         path = galeria or galeria_path(modelo)
         if not Path(path).exists():
             raise FileNotFoundError(f"Falta la galeria {path}: python -m reconocimiento.galeria --modelo {modelo}")

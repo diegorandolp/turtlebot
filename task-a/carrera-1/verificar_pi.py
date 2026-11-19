@@ -77,7 +77,7 @@ cv2.setNumThreads(1)
 try:
     from reconocimiento import Reconocedor
     t0 = time.perf_counter()
-    rec = Reconocedor(modelo="mbf")
+    rec = Reconocedor(modelo="mbf", espejo=False)                   # como la carrera
     ok(f"YuNet + ArcFace mbf + galeria cargados en {time.perf_counter() - t0:.1f} s ({len(rec.nombres)} personas)")
 except Exception as e:                                           # noqa: BLE001
     mal(f"no cargan los modelos: {e} (copiar reconocimiento/modelos/*.onnx y galeria_mbf.npz)")

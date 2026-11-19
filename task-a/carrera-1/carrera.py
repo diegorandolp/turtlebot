@@ -95,7 +95,7 @@ def nombre_en_galeria(nombre, nombres):
 
 
 def armar(args, excluir=()):
-    rec = Reconocedor(args.modelo, excluir=excluir)
+    rec = Reconocedor(args.modelo, excluir=excluir, espejo=getattr(args, "espejo", False))
     forma = not args.flechas_solo_negras                                 # las senales del lab pueden ser de color
     per = Percepcion(rec, DetectorFlechas(color=args.flechas_color, forma=forma), hfov=args.hfov, hfov_hd=args.hfov_hd,
                      max_caras=6 if args.buscar else 3)
@@ -579,6 +579,8 @@ def parse(argv=None):
     ap.add_argument("--flechas-color", action="store_true", help="(con --flechas-solo-negras) aceptar tambien tinta de color")
     ap.add_argument("--flechas-solo-negras", action="store_true",
                     help="flechas solo de tinta oscura (por defecto cuenta la FORMA, de cualquier color)")
+    ap.add_argument("--espejo", action="store_true",
+                    help="ArcFace tambien con la cara reflejada (el doble de calculo; casi el mismo acierto)")
     ap.add_argument("--modelo", default="auto", help="reconocimiento: auto (r50 si esta instalado, si no mbf) | mbf | r50")
     # OAK-D Lite (TurtleBot 4 Lite): color IMX214, HFOV 69 grados (hoja de datos de Luxonis). La HD 1280x720 conserva
     # ese ancho; la preview 250x250 es el recorte cuadrado central de la 16:9: 2*atan(tan(34.5)*720/1280) = 42 grados.
