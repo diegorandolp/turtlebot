@@ -13,6 +13,54 @@ números medidos al lado: sirven para calibrar (`lab.json`) y para el informe.
 - [x] Conducir con WASD, cambiar velocidad, undock (`u`) y volver al dock (`k`), foto (`p`).
 - [x] Cámara: `camara_rgb.sh --hd` (~21 fps en el robot); preview en `probar_vision.py` (~18 fps).
 
+## ✅ Primera carrera dentro de la Raspberry (2026-11-19)
+
+Circuito: salida frente a una señal "derecha" (~1 m), al doblar un pasillo de cajas con una fila de
+fotos con QR en las paredes. Todo en la Raspberry; START por UDP con `robot/control_carrera.py`.
+
+- [x] Flecha vista a 1.7 s, giro a la derecha a 4.5 s, recorrió la fila, reconoció a la persona
+      (p = 0.96), **leyó su QR** a 76 s, volvió y paró a **0.21 m de A** (93.9 s, 0 choques).
+- [x] Anuncio: llegó al puente; a la PC no llegó (un solo paquete UDP). Quedó en `RESULTADO.txt`.
+- [ ] Anunció solo el nombre: el QR se leyó 1 vez y la regla pedía 2 (arreglado, falta re-probar).
+- Tiempos muertos: 15–50 s recorriendo la fila (la Pi procesa ~2 fotos/s) y 52–82 s frente al QR
+  (cada foto HD tarda ~4 s: 6 fotos en 30 s).
+
+Bugs que solo aparecieron en el robot (arreglados):
+
+| Síntoma | Causa | Arreglo |
+|---|---|---|
+| `--correr` no imprime nada y la carrera no corre | el `pkill` encontraba al propio shell remoto (su línea contiene el comando) | `pkill -f '^python3 -u task-a/carrera-1/carrera[.]py'` |
+| tras START el puente no responde a nadie | deadlock: `on_packet` tiene el lock y `broadcast` lo vuelve a tomar | `threading.RLock` en `tb4_bridge.py` |
+| la carrera va sin cámara (`fotos 0`) | el numpy 2 de `~/.local` (instalado para la carrera) rompe `cv_bridge` en el puente | el puente corre con `PYTHONNOUSERSITE=1` |
+| la palabra no aparece en la PC | un solo paquete UDP | `ANUNCIO:` se repite 3 s |
+| "odometría None" en `--verificar` | se leía antes del primer dato | espera 5 s; ahora también prueba la cámara |
+
+Operación (lo que costó tiempo):
+
+- `tb4_inicio.sh --force` corrige la hora y **reinicia la Create 3: esperar ~5 min** hasta ver `pose (...)` en `tb4.client`.
+- Tras reiniciar ROS el LiDAR puede no arrancar (no hay nodo `rplidar_composition`):
+  `ssh -t ubuntu@192.168.0.104 "sudo systemctl restart turtlebot4.service"` y esperar ~40 s.
+- La cámara se lanza a mano (`camara_rgb.sh --hd`) después de cada reinicio de ROS.
+- En el dock el power_saver apaga cámara y LiDAR: verificar y correr **fuera del dock**.
+- `--parar` mata la carrera y deja el video sin cerrar: mejor levantar el robot o usar el botón.
+
+Secuencia que funcionó (robot fuera del dock):
+
+```bash
+bash robot/tb4_inicio.sh
+bash robot/deploy_bridge.sh --bg
+bash task-a/camara/camara_rgb.sh --hd
+bash robot/desplegar_carrera.sh && bash robot/desplegar_carrera.sh --verificar
+bash robot/desplegar_carrera.sh --correr "Nombre Apellido"
+python robot/control_carrera.py 192.168.0.104        # START; imprime ANUNCIO
+bash robot/desplegar_carrera.sh --resultado           # la palabra, si no llegó a la PC
+bash robot/desplegar_carrera.sh --video
+```
+
+Respuestas del profe (19/11): las fotos van **pegadas a los costados** del último tramo, nunca en la
+pared del fondo; el QR va como lo pusimos (debajo de la foto); solo cuentan los rostros subidos hasta
+el 19/11. Sin respuesta aún: cuántas fotos habrá y si las cajas tendrán letras impresas.
+
 ## 🏠 Antes del próximo lab (sin robot)
 
 - [ ] Imprimir 3–6 fotos de personas del dataset **con su QR**, del tamaño que se espera en la competencia.
