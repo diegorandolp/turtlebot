@@ -131,10 +131,19 @@ try:
         mal("el puente no responde en 127.0.0.1:5600 (robot/tb4_inicio.sh o robot/deploy_bridge.sh desde la PC)")
     else:
         ok(f"puente UDP responde: {st}")
+        fin = time.monotonic() + 5.0                              # LiDAR (~7 Hz) y odometria (~20 Hz) llegan despues del STATUS
+        while time.monotonic() < fin and (cl.scan() is None or cl.pose() is None):
+            time.sleep(0.1)
         sc = cl.scan()
         (ok if sc is not None and len(sc.ranges) > 100 else mal)("LiDAR llegando por el puente" if sc else "sin LiDAR (robot en el dock? undock)")
         pose = cl.pose()
         (ok if pose is not None else mal)(f"odometria: {pose}")
+        for hd in (False, True):                                  # sin camara la carrera va a ciegas
+            try:
+                img = cl.photo(timeout=4.0, hd=hd)
+                ok(f"camara {'HD' if hd else 'preview'}: {img.shape[1]}x{img.shape[0]}")
+            except Exception as e:                               # noqa: BLE001
+                (aviso if hd else mal)(f"camara {'HD' if hd else 'preview'}: {e} -> task-a/camara/camara_rgb.sh --hd")
 except Exception as e:                                           # noqa: BLE001
     mal(f"cliente UDP: {e}")
 

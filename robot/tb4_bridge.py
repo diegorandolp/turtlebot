@@ -84,7 +84,7 @@ class Bridge(Node):
             max_linear=args.max_linear, max_angular=args.max_angular,
             stop_dist=args.stop_dist, clear_dist=args.stop_dist + 0.10,
             slow_dist=args.slow_dist))
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()  # reentrante: on_packet (con lock) llama a broadcast (que toma lock)
 
         # Estado compartido entre el hilo UDP y los callbacks de ROS
         self.pcs = {}            # addr -> ultima vez que se supo de ella

@@ -114,10 +114,10 @@ case "$MODE" in
     NOMBRE="${1:-}"
     [ -n "$NOMBRE" ] || { echo "uso: $0 --correr \"Nombre Apellido\"   (como en datos/rostros/)"; exit 1; }
     # nohup + setsid: sigue corriendo aunque se cierre la SSH. Empieza en PAUSA: --go da la salida.
-    "${SSH[@]}" "$TARGET" "cd ~/$DIR && pkill -f '[c]arrera-1/carrera.py' 2>/dev/null; \
+    "${SSH[@]}" "$TARGET" "cd ~/$DIR && pkill -f '^python3 -u task-a/carrera-1/carrera[.]py' 2>/dev/null; \
       setsid nohup python3 -u task-a/carrera-1/carrera.py 127.0.0.1 --no-gui --undock --video --video-fps 4 --video-sin-h264 \
         --buscar '$NOMBRE' --go-archivo GO --go-boton --resultado-archivo RESULTADO.txt ${CARRERA_ARGS:-} > $LOG 2>&1 < /dev/null & \
-      sleep 2; pgrep -af '[c]arrera-1/carrera.py' >/dev/null && echo '[ok] carrera arrancada (en pausa)' || { tail -n 20 $LOG; exit 1; }"
+      sleep 2; pgrep -f '^python3 -u task-a/carrera-1/carrera[.]py' >/dev/null && echo '[ok] carrera arrancada (en pausa)' || { tail -n 20 $LOG; exit 1; }"
     echo "Ahora: $0 --go (o el BOTON 1 del robot) da la salida; $0 --escuchar para oir el anuncio en la PC"
     ;;
   --go)

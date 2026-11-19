@@ -30,7 +30,9 @@ if [ -n "${SSHPASS:-}" ] && command -v sshpass >/dev/null; then
   SSH=(sshpass -e "${SSH[@]}"); SCP=(sshpass -e "${SCP[@]}")
 fi
 
-RUN="source /etc/turtlebot4/setup.bash && cd ~/$DIR && exec python3 -u tb4_bridge.py $EXTRA"
+# PYTHONNOUSERSITE=1: el puente usa el numpy/OpenCV del sistema (los de ROS). El numpy 2 / OpenCV de pip que la
+# carrera instala en ~/.local no son compatibles con cv_bridge (compilado con numpy 1).
+RUN="source /etc/turtlebot4/setup.bash && cd ~/$DIR && PYTHONNOUSERSITE=1 exec python3 -u tb4_bridge.py $EXTRA"
 STOP="pkill -f '[t]b4_bridge.py' && echo 'puente detenido' || echo 'el puente no estaba corriendo'"
 
 case "$MODE" in
