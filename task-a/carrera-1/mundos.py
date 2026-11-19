@@ -76,6 +76,101 @@ def textura_rostro_qr(foto, ancho_m, rng, texto, qr_m=0.10, esquina=None):
     return tex, alto_m
 
 
+# Cajas del laboratorio como se vieron con la camara del robot el 19/11: carton mas gris que naranja, con
+# logos y letras impresas (Tambo, San Jose...), cinta, etiquetas amarillas y codigos de barra. Las letras y
+# los iconos "este lado arriba" son los que dieron candidatas falsas de flecha en el robot.
+ANCHO_FOTO = (0.12, 0.16)  # m: las fotos impresas del 19/11 median ~10-15 cm de ancho (la cara, ~5 cm)
+PALABRAS_CAJA = ["TAMBO", "SAN JOSE", "Suavecito", "FRAGIL", "VT2", "GLORIA", "LUCKY", "ARROZ", "LECHE",
+                 "ESTE LADO", "PERU", "MANI", "INKA", "500 g", "x 12", "KR", "PAMPA", "COSTENO"]
+TINTAS_CAJA = [(40, 40, 150), (30, 30, 30), (120, 60, 30), (40, 110, 40), (60, 60, 160), (90, 50, 110)]
+
+
+def textura_cajas(largo_m, alto_m, rng, color, ppm=250.0, letras=0.7):
+    """Frente de una fila de cajas de carton (largo_m x alto_m) a `ppm` px/m: costuras entre cajas cada
+    0.3-0.6 m (cada caja un poco mas clara u oscura), cinta, y en una parte de las cajas letras/logos impresos
+    (`letras` = fraccion de cajas con impresion), etiquetas amarillas, codigos de barra y a veces el icono de
+    dos flechitas "este lado arriba"."""
+    W, H = max(int(largo_m * ppm), 8), max(int(alto_m * ppm), 8)
+    base = np.empty((H, W, 3), np.float32)
+    base[:] = color
+    base += rng.normal(0, 3.0, (H, W, 1)).astype(np.float32)                # fibra del carton
+    cajas, x = [], 0
+    while x < W:
+        w = int(rng.uniform(0.30, 0.60) * ppm)
+        base[:, x:x + w] *= float(rng.uniform(0.9, 1.08))
+        if x > 0:
+            base[:, max(x - 1, 0):x + 1] *= 0.7                             # costura entre dos cajas
+        if rng.random() < 0.35:                                             # cinta de embalaje
+            y0, hc = int(rng.uniform(0.1, 0.8) * H), int(0.05 * ppm)
+            base[y0:y0 + hc, x:x + w] = base[y0:y0 + hc, x:x + w] * 1.08 + 6
+        cajas.append((x, w))
+        x += w
+    tex = np.clip(base, 0, 255).astype(np.uint8)
+    for x, w in cajas:
+        if rng.random() < letras:                                           # impresion: palabras / logo
+            for _ in range(int(rng.integers(1, 4))):
+                pal = str(rng.choice(PALABRAS_CAJA))
+                esc = float(rng.uniform(0.025, 0.08)) * ppm / 22.0          # letras de 2.5 a 8 cm
+                grosor = max(1, int(esc * rng.uniform(1.5, 3.0)))
+                col = TINTAS_CAJA[int(rng.integers(len(TINTAS_CAJA)))]
+                (tw, th), _ = cv2.getTextSize(pal, cv2.FONT_HERSHEY_DUPLEX, esc, grosor)
+                px0 = x + int(rng.uniform(0, max(w - tw, 1)))
+                py0 = int(rng.uniform(th + 2, max(H - 4, th + 3)))
+                cv2.putText(tex, pal, (px0, py0), cv2.FONT_HERSHEY_DUPLEX, esc, col, grosor, cv2.LINE_AA)
+            if rng.random() < 0.3:                                          # logo: ovalo con borde
+                c = (x + int(rng.uniform(0.2, 0.8) * w), int(rng.uniform(0.3, 0.7) * H))
+                ej = (int(rng.uniform(0.04, 0.09) * ppm), int(rng.uniform(0.025, 0.05) * ppm))
+                cv2.ellipse(tex, c, ej, 0, 0, 360, TINTAS_CAJA[int(rng.integers(len(TINTAS_CAJA)))], 2, cv2.LINE_AA)
+        if rng.random() < 0.25:                                             # etiqueta amarilla con renglones
+            ew, eh = int(0.07 * ppm), int(0.045 * ppm)
+            ex0, ey0 = x + int(rng.uniform(0, max(w - ew, 1))), int(rng.uniform(0, max(H - eh, 1)))
+            tex[ey0:ey0 + eh, ex0:ex0 + ew] = (40, 200, 230)
+            for r in range(3):
+                yy = ey0 + int((r + 1) * eh / 4)
+                cv2.line(tex, (ex0 + 2, yy), (ex0 + ew - 3, yy), (40, 40, 40), 1)
+        if rng.random() < 0.2:                                              # codigo de barras
+            bx0, by0 = x + int(rng.uniform(0, max(w - 0.06 * ppm, 1))), int(rng.uniform(0.1, 0.7) * H)
+            for k2 in range(int(0.06 * ppm)):
+                if rng.random() < 0.5 and bx0 + k2 < W:
+                    tex[by0:by0 + int(0.03 * ppm), bx0 + k2] = 30
+        if rng.random() < 0.12:                                             # "este lado arriba": dos flechitas
+            fx, fy = x + int(rng.uniform(0.1, 0.8) * w), int(rng.uniform(0.15, 0.5) * H)
+            L = int(0.045 * ppm)
+            for d in (0, int(0.025 * ppm)):
+                cv2.arrowedLine(tex, (fx + d, fy + L), (fx + d, fy), (30, 30, 30), 2, cv2.LINE_AA, tipLength=0.4)
+    return tex
+
+
+def texturizar(paredes, rng, letras=0.7, ppm=250.0):
+    """Le pone textura de cajas a cada pared de carton (in place)."""
+    for p in paredes:
+        L = math.hypot(p.b[0] - p.a[0], p.b[1] - p.a[1])
+        if L > 0.02:
+            p.textura = textura_cajas(L, p.alto, rng, p.color, ppm, letras)
+            p.ppm = ppm
+    return paredes
+
+
+def carteles_foto_qr(a, b, centro_s, foto, ancho_foto, rng, texto, z_qr=None, gap=None, lado_qr=0.10):
+    """La foto impresa con la hoja del QR DEBAJO y centrada (asi las pegamos el 19/11 y el profe dijo que esta
+    bien): dos carteles en la pared a->b, centrados en la fraccion `centro_s`. -> ([cartel_foto, cartel_qr],
+    z de arriba de la foto)."""
+    tex_f, alto_f = textura_rostro(foto, ancho_foto, rng)
+    marco = 0.006                                                            # margen blanco de la hoja del QR
+    N = int((lado_qr + 2 * marco) * PX_M)
+    q = imagen_qr(texto, N - 2 * int(marco * PX_M))
+    hoja = np.full((N, N, 3), 245, np.uint8)
+    o = int(marco * PX_M)
+    hoja[o:o + q.shape[0], o:o + q.shape[1]] = q
+    z_qr = float(rng.uniform(0.02, 0.06)) if z_qr is None else z_qr
+    gap = float(rng.uniform(0.0, 0.02)) if gap is None else gap
+    alto_q = lado_qr + 2 * marco
+    k_q = cartel_en_pared(a, b, centro_s, alto_q, z_qr, alto_q, hoja, "qr")
+    z_f = z_qr + alto_q + gap
+    k_f = cartel_en_pared(a, b, centro_s, ancho_foto, z_f, alto_f, tex_f, "rostro")
+    return [k_f, k_q], z_f + alto_f
+
+
 def textura_flecha(direccion, rng, estilo=None, lado_m=0.22, color=(25, 25, 25), aro=None):
     """Senal cuadrada de papel con una flecha (estilos variados). direccion: 'der' | 'izq' | 'arriba'."""
     estilo = estilo or rng.choice(["giro", "recta", "curva", "chevron"])
@@ -365,8 +460,9 @@ def sala(semilla=3, persona=None):
 # ---------------------------------------------------------------- salas con muchas cajas (laboratorio)
 
 PASO_MIN = 0.24          # radio con el que se exige que haya camino: deja pasos de >= ~0.48 m
-CARTON = (95, 140, 178)  # BGR: las paredes y obstaculos del laboratorio son cajas de carton (marron medio)
-SUELO_LAB = 115.0        # brillo del piso del laboratorio (gris medio)
+CARTON = (128, 138, 146)  # BGR: cajas de carton como las ve la camara del robot (medido el 19/11: gris-beige)
+SUELO_LAB = 178.0         # brillo del piso del laboratorio: gris muy claro (~195-200 cerca de la camara, 19/11)
+ALTO_CAJAS = (0.30, 0.45) # m: las cajas son bajas, la camara ve el aula por encima
 COLORES_SENAL = [(25, 25, 25), (150, 60, 20), (40, 40, 190), (40, 140, 30)]   # BGR: negra, azul, roja, verde
 
 
@@ -388,6 +484,15 @@ def _en_pared(pared, t, W, H, d=0.0):
     if pared == "arriba":
         return (t, H - d)
     return (t, d)
+
+
+def _pared_meta(pared, t, W, H):
+    """(a, b, fraccion) de la pared de la meta en la coordenada t, con a->b orientada para mirar adentro."""
+    if pared == "der":
+        return (W, 0), (W, H), t / H
+    if pared == "arriba":
+        return (W, H), (0, H), (W - t) / W
+    return (0, 0), (W, 0), t / W
 
 
 def _cartel_meta(pared, t, W, H, ancho, z0, alto, tex):
@@ -415,7 +520,7 @@ def _sala_con_cajas(W, H, cajas, inicio, t_b, rng, persona, nombre_mundo, semill
     k_obj = int(rng.integers(len(ts))) if n_rostros > 1 else 0
     t_b = ts[k_obj]
     metas = [_en_pared(pared, t, W, H, 0.30) for t in ts]                # donde termina de acercarse a cada foto
-    paredes = ex.paredes(0.5, CARTON)                                     # el laboratorio: cajas de carton
+    paredes = ex.paredes(0.42, CARTON)                                    # el laboratorio: cajas de carton
     def d_rect(cx, cy, w, h, px, py):                                    # distancia del rectangulo al punto
         return math.hypot(max(abs(px - cx) - w / 2, 0.0), max(abs(py - cy) - h / 2, 0.0))
 
@@ -440,6 +545,7 @@ def _sala_con_cajas(W, H, cajas, inicio, t_b, rng, persona, nombre_mundo, semill
         ancho_foto = rng.uniform(0.18, 0.28)
         tex, alto_foto = textura_rostro(foto, ancho_foto, rng)
         carteles = [_cartel_meta(pared, t_b, W, H, ancho_foto, rng.uniform(0.0, 0.12), alto_foto, tex)] + list(extra)
+        texturizar(paredes, rng)
         return Mundo(paredes, inicio, carteles, [], b, nombre, nombre_mundo, luz=float(rng.uniform(0.8, 1.1)),
                      semilla=semilla, foto_b=ref_foto(foto), fotos_excluir=(ref_foto(foto),), suelo=SUELO_LAB)
     # varias fotos con QR: personas distintas, la buscada en la posicion k_obj
@@ -454,18 +560,20 @@ def _sala_con_cajas(W, H, cajas, inicio, t_b, rng, persona, nombre_mundo, semill
     if elegidas[k_obj][0] != (persona or elegidas[k_obj][0]):
         raise ValueError(f"no se pudo poner a {persona} en la meta")
     carteles, rostros, textos = [], [], set()
-    z0 = float(rng.uniform(0.0, 0.10))                                    # misma altura para toda la fila
+    z_qr = float(rng.uniform(0.02, 0.06))                                 # misma altura para toda la fila
     sep_real = abs(ts[1] - ts[0]) if len(ts) > 1 else 1.0
     for (nombre, foto), t in zip(elegidas, ts):
         tq = texto_qr(rng)
         while tq in textos:
             tq = texto_qr(rng)
         textos.add(tq)
-        ancho_foto = float(min(rng.uniform(0.20, 0.26), sep_real - 0.04))    # que no se monten
-        tex, alto_foto = textura_rostro_qr(foto, ancho_foto, rng, tq, qr_m=min(0.10, ancho_foto - 0.02))
-        carteles.append(_cartel_meta(pared, t, W, H, ancho_foto, z0, alto_foto, tex))
+        ancho_foto = float(min(rng.uniform(*ANCHO_FOTO), sep_real - 0.04))    # impresiones chicas, que no se monten
+        a, b, fr = _pared_meta(pared, t, W, H)
+        ks, _ = carteles_foto_qr(a, b, fr, foto, ancho_foto, rng, tq, z_qr=z_qr)
+        carteles += ks
         rostros.append((nombre, tq, _en_pared(pared, t, W, H)))
     nombre_obj, foto_obj = elegidas[k_obj]
+    texturizar(paredes, rng)
     return Mundo(paredes, inicio, carteles + list(extra), [], b, nombre_obj,
                  f"{nombre_mundo}+{len(ts)}" + (f":{sep:g}" if sep else ""),
                  luz=float(rng.uniform(0.8, 1.1)), semilla=semilla, foto_b=ref_foto(foto_obj),
@@ -501,7 +609,7 @@ def croquis(W=4.0, H=4.0, semilla=0, persona=None, n_rostros=1, sep=None, flecha
     azar con `color_flechas`: en el laboratorio pueden no ser negras)."""
     rng = np.random.default_rng(semilla)
     sx, sy = W / 4.0, H / 4.0
-    cajas = [((x0 + x1) / 2 * sx, (y0 + y1) / 2 * sy, (x1 - x0) * sx, (y1 - y0) * sy, float(rng.uniform(0.3, 0.5)))
+    cajas = [((x0 + x1) / 2 * sx, (y0 + y1) / 2 * sy, (x1 - x0) * sx, (y1 - y0) * sy, float(rng.uniform(*ALTO_CAJAS)))
              for x0, y0, x1, y1 in _CROQUIS_CAJAS]
     extra = []
     if flechas:
@@ -542,7 +650,7 @@ def sala_densa(semilla, W=4.0, H=4.0, persona=None, n_rostros=1, sep=None, pared
         cerca_meta = min(math.hypot(cx - (W - 0.3), cy - y) for y in metas_y) if pared == "der" else 9.0
         if math.hypot(cx - inicio[0], cy - inicio[1]) < 0.75 or cerca_meta < 0.6:
             continue
-        cajas.append((cx, cy, w, h, float(rng.uniform(0.25, 0.5))))
+        cajas.append((cx, cy, w, h, float(rng.uniform(*ALTO_CAJAS))))
     t_b = y_b
     azar = pared == "azar"
     if azar:
@@ -627,7 +735,7 @@ def laberinto(semilla, C=7, F=6, celda=0.8, persona=None, n_rostros=1, sep=None,
         if m in abiertos:
             continue
         (i, j), (i2, j2) = m
-        alto = float(rng.uniform(0.3, 0.5))
+        alto = float(rng.uniform(*ALTO_CAJAS))
         if i2 != i:                                          # muro vertical en x = (i+1) * celda
             cajas.append(((i + 1) * celda, (j + 0.5) * celda, t, celda + t, alto))
         else:                                                # muro horizontal en y = (j+1) * celda
@@ -657,20 +765,163 @@ def laberinto(semilla, C=7, F=6, celda=0.8, persona=None, n_rostros=1, sep=None,
                            paso=min(PASO_MIN, (celda - t) / 2 - 0.1))   # pasillos angostos: holgura en la rejilla
 
 
+def tubo(semilla, persona=None, n_rostros=5, sep=None, giros=None, ramas=None, flechas=True, cajas=None):
+    """Circuito como el del simulacro del 19/11 y lo que dijo el profe: pasillos de cajas bajas con 1-3 giros
+    de 90 grados (una senal de color en la pared de enfrente de cada giro, a veces una rama sin salida del otro
+    lado) y al final un callejon sin salida ("el tubo") con las fotos pegadas en sus DOS COSTADOS, nunca en la
+    pared del fondo. Fotos chicas (12-16 cm) con su QR debajo. Algunas cajas sueltas en los pasillos (no en el
+    tubo) dejan pasos de >= 0.5 m."""
+    rng = np.random.default_rng(semilla)
+    ancho = round(rng.uniform(0.85, 1.20) / (2 * RES)) * 2 * RES          # pasillos de ~1 m como en el lab
+    h = ancho / 2
+    sepm = 0.25                                                           # pared minima entre dos pasillos
+    n_giros = int(rng.integers(1, 4) if giros is None else giros)
+    n_rostros = max(int(n_rostros), 1)
+    sep_f = float(rng.uniform(0.40, 0.55)) if sep is None else float(sep)
+    largo_tubo = max(1.6, (math.ceil(n_rostros / 2) + 0.6) * sep_f + h + 0.5)   # caben media fila por lado + margen
+    for _intento in range(30):                                            # se rehace si un tramo no cabe
+        ex = Excavadora()
+        pos, d = np.array([0.0, 0.0]), 0
+        centros, giros_l, ok = [pos.copy()], [], True
+        for i in range(n_giros + 1):
+            u = np.array(DIRS[d], float)
+            ultimo = i == n_giros
+            minimo = largo_tubo if ultimo else 1.4
+            largo = round((largo_tubo + float(rng.uniform(0.0, 0.6)) if ultimo else rng.uniform(1.6, 3.0)) / RES) * RES
+            while True:
+                fin = pos + u * largo
+                x0, y0, x1, y1 = _rect(pos + u * (2 * h + 2 * sepm), fin, h + sepm)
+                if i == 0 or (not ex.ocupado(x0, y0, x1, y1) and np.abs(fin).max() < 6.0):
+                    break
+                largo = round(largo * 0.85 / RES) * RES
+                if largo < minimo:
+                    ok = False
+                    break
+            if not ok:
+                break
+            ex.rect(*_rect(pos, fin, h))
+            pos = fin
+            centros.append(pos.copy())
+            if not ultimo:
+                giro = int(rng.choice([-1, 1]))
+                giros_l.append((pos.copy(), d, giro))
+                d = (d + giro) % 4
+        if ok:
+            break
+    n_ramas = int(rng.integers(0, 2) if ramas is None else ramas)
+    for p, d_in, giro in giros_l[:n_ramas]:
+        u = np.array(DIRS[(d_in - giro) % 4], float)
+        fin = p + u * round(rng.uniform(1.0, 1.6) / RES) * RES
+        x0, y0, x1, y1 = _rect(p + u * (2 * h + 2 * sepm), fin, h + sepm)
+        if not ex.ocupado(x0, y0, x1, y1):
+            ex.rect(*_rect(p, fin, h))
+    inicio = (float(centros[0][0] - h + 0.35), float(centros[0][1]), 0.0)
+    # el tubo: ultimo tramo, de centros[-2] (el ultimo giro) a centros[-1] (el fondo)
+    ud = np.array(DIRS[d], float)
+    perp = np.array([-ud[1], ud[0]])                                      # a la izquierda de quien entra
+    c0, c1 = centros[-2], centros[-1]
+    largo_t = float(np.linalg.norm(c1 - c0))
+    # puestos en los costados: desde la boca del tubo (pasado el empalme) hasta 0.25 m del fondo
+    t_ini, t_fin = h + 0.25, largo_t + h - 0.25                          # medidos desde c0 a lo largo de ud
+    puestos = []
+    for lado in (1, -1):
+        k = 0
+        while t_ini + k * sep_f <= t_fin:
+            puestos.append((t_ini + k * sep_f + float(rng.uniform(-0.04, 0.04)), lado))
+            k += 1
+    rng.shuffle(puestos)
+    elegidos = sorted(puestos[:n_rostros])
+    # cajas sueltas en los pasillos de antes del tubo (obstaculos), sin cerrar el camino
+    meta = tuple(c1 - ud * 0.4)
+    n_cajas = int(rng.integers(0, 3) if cajas is None else cajas)
+    paredes_cajas = []
+    for _ in range(40):
+        if len(paredes_cajas) >= n_cajas or len(centros) < 3:
+            break
+        i = int(rng.integers(len(centros) - 2))                          # no en el tubo
+        a_, b_ = centros[i], centros[i + 1]
+        seg = b_ - a_
+        L = float(np.linalg.norm(seg))
+        t = float(rng.uniform(0.35, 0.75))
+        if i == 0 and t * L < 1.0:
+            continue
+        u = seg / max(L, 1e-9)
+        pp = np.array([-u[1], u[0]])
+        lado_c = float(rng.uniform(0.25, 0.40))
+        c = a_ + seg * t + pp * rng.choice([-1, 1]) * (h - lado_c / 2)    # pegada a una pared del pasillo
+        r = lado_c / 2
+        prueba = ex.libre.copy()
+        ex.rect(c[0] - r, c[1] - r, c[0] + r, c[1] + r, valor=False)
+        if not _camino_libre(ex, inicio[:2], meta, radio=PASO_MIN):
+            ex.libre = prueba
+            continue
+        paredes_cajas.append((c, r, float(rng.uniform(*ALTO_CAJAS))))
+    paredes = ex.paredes(0.42, CARTON)
+    for c, r, alto in paredes_cajas:
+        col = tuple(int(np.clip(v * rng.uniform(0.85, 1.12), 0, 255)) for v in CARTON)
+        _caja(paredes, c, r, r, alto, col)
+    texturizar(paredes, rng)
+    # senales: en la pared de enfrente de cada giro, mirando al que llega
+    carteles = []
+    if flechas:
+        for p, d_in, giro in giros_l:
+            u = np.array(DIRS[d_in], float)
+            pp = np.array([-u[1], u[0]])
+            frente = p + u * h
+            a, b = frente - pp * h, frente + pp * h
+            dir_ = "izq" if giro > 0 else "der"
+            lado = float(rng.uniform(0.18, 0.22))
+            col = COLORES_SENAL[int(rng.integers(len(COLORES_SENAL)))]
+            tex = textura_flecha(dir_, rng, estilo="giro", lado_m=lado, color=col)
+            carteles.append(cartel_en_pared(a, b, 0.5 + float(rng.uniform(-0.15, 0.15)), lado,
+                                            float(rng.uniform(0.04, 0.12)), lado, tex, "flecha:" + dir_))
+    # fotos con QR: personas distintas, la buscada en uno de los puestos al azar
+    k_obj = int(rng.integers(len(elegidos)))
+    gente, usadas = [], set()
+    for i in range(len(elegidos)):
+        for _ in range(50):
+            nombre, foto = elegir_persona(rng, persona if i == k_obj else None)
+            if nombre not in usadas:
+                break
+        usadas.add(nombre)
+        gente.append((nombre, foto))
+    rostros, textos = [], set()
+    z_qr = float(rng.uniform(0.02, 0.06))
+    boca = c0 - ud * h                                                    # t = 0: donde empieza el tubo
+    for (nombre, foto), (t, lado) in zip(gente, elegidos):
+        tq = texto_qr(rng)
+        while tq in textos:
+            tq = texto_qr(rng)
+        textos.add(tq)
+        ancho_foto = float(rng.uniform(*ANCHO_FOTO))
+        pared_c = boca + ud * t + perp * lado * h                         # punto de la pared del costado
+        a, b = pared_c - ud * 0.3, pared_c + ud * 0.3
+        if lado > 0:                                                      # que mire hacia adentro del tubo
+            a, b = b, a
+        ks, _ = carteles_foto_qr(a, b, 0.5, foto, ancho_foto, rng, tq, z_qr=z_qr)
+        carteles += ks
+        rostros.append((nombre, tq, (float(pared_c[0]), float(pared_c[1]))))
+    nombre_obj, foto_obj = gente[k_obj]
+    return Mundo(paredes, inicio, carteles, [], rostros[k_obj][2], nombre_obj,
+                 f"tubo:{semilla}+{len(elegidos)}" + (f":{sep:g}" if sep else ""), luz=float(rng.uniform(0.85, 1.1)),
+                 semilla=semilla, foto_b=ref_foto(foto_obj), fotos_excluir=tuple(ref_foto(f) for _, f in gente),
+                 qr=rostros[k_obj][1], rostros=rostros, suelo=SUELO_LAB)
+
+
 def construir(nombre, persona=None):
     """Mundos: demo | demo-sin-flechas | sala[:N] | aleatorio:N[:sin] | croquis[:W:H] | denso:N[:W:H] | lab:N
     (lab = sala con cajas y la meta en la pared de la derecha, arriba o abajo) | laberinto:N[:C:F] (laberinto
     largo de C x F celdas de 0.8 m, defecto 7 x 6; con :celda, otro ancho: laberinto:1:6:5:0.7).
     Con "+K" al final (solo croquis y denso), la meta tiene K fotos con QR: p. ej. croquis+6, denso:3+6.
     "+K:S" fija la separacion entre fotos en S m (defecto 0.40-0.55 al azar): denso:3+6:0.3 = mas juntas."""
-    n_rostros, sep = 1, None
+    n_rostros, sep, nombre_orig = 1, None, nombre
     if "+" in nombre:
         nombre, k = nombre.split("+", 1)
         if ":" in k:
             k, sep = k.split(":", 1)
             sep = float(sep)
         n_rostros = int(k)
-        if not nombre.startswith(("croquis", "denso", "lab", "laberinto")):
+        if not nombre.startswith(("croquis", "denso", "lab", "laberinto", "tubo")):
             raise ValueError(f"'+{k}' (varias fotos con QR) solo existe para croquis y denso, no para {nombre}")
     partes = nombre.split(":")
     if partes[0] == "demo":
@@ -692,6 +943,9 @@ def construir(nombre, persona=None):
         F = int(partes[3]) if len(partes) > 3 else 6
         celda = float(partes[4]) if len(partes) > 4 else 0.8
         return laberinto(semilla, C, F, celda, persona=persona, n_rostros=n_rostros, sep=sep)
+    if partes[0] == "tubo":                                      # tubo:N[+K] (defecto 5 fotos en los costados)
+        semilla = int(partes[1]) if len(partes) > 1 else 0
+        return tubo(semilla, persona, n_rostros=n_rostros if "+" in nombre_orig else 5, sep=sep)
     if partes[0] == "lab":                                       # lab:N = denso con la meta en cualquier pared
         semilla = int(partes[1]) if len(partes) > 1 else 0
         return sala_densa(semilla, 4.0, 4.0, persona, n_rostros=n_rostros, sep=sep, pared="azar")

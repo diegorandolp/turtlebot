@@ -25,6 +25,7 @@ import argparse
 import os
 import json
 import math
+import signal
 import sys
 import time
 import unicodedata
@@ -111,7 +112,8 @@ def armar(args, excluir=()):
               + ("" if lector() == "wechat" else " (con opencv-contrib-python se lee desde mas lejos)"))
     # > 0.31 m/s solo con `safety_override: full` en la Create 3 (ver README, "Mas rapido en las rectas")
     cfg = Config(vmax=args.vel, vmax_vuelta=min(max(0.31, args.vel), args.vel + 0.02), temprano=args.temprano,
-                 usar_flechas=not args.sin_flechas, buscar=buscar, leer_qr=not args.sin_qr)
+                 usar_flechas=not args.sin_flechas, buscar=buscar, leer_qr=not args.sin_qr,
+                 n_fotos=getattr(args, "n_fotos", 0) or 0)
     pl_fino = Planner(MAP_M, MAP_PX, cell=2, robot_radius=0.10, margin=0.0)
     nav = Carrera(cfg, pl, vot, Objetivo(vot), Senales(min_n=2), exp, planner_fino=pl_fino)
     if args.mirada_desde is not None:
@@ -303,8 +305,15 @@ def cuadro_video(vista, robot, sim, v, w, choques_previos=0):
 
 def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
     """Una corrida completa. `robot` = TB4Client o SimRobot. Devuelve un resumen (dict)."""
-    if args.cam_periodo is None:
-        args.cam_periodo = 0.3 if args.hd else 0.15                  # renderizar HD cuesta mas
+    pi = getattr(args, "tiempos", "pc") == "pi"
+    if args.cam_periodo is None:                                     # Raspberry (medido el 19/11): ~2 fotos/s en
+        args.cam_periodo = (1.0 if args.hd else 0.5) if pi else (0.3 if args.hd else 0.15)   # preview, ~4 s la HD
+    if getattr(args, "cam_periodo_hd", None) is None:
+        args.cam_periodo_hd = 4.0 if pi else max(args.cam_periodo, 0.3)
+    if getattr(args, "cam_latencia_hd", None) is None:
+        args.cam_latencia_hd = 3.6 if pi else args.cam_latencia
+    if pi and args.cam_latencia == 0.15:
+        args.cam_latencia = 0.45
     excluir = ()
     if sim and mundo is not None:
         excluir = tuple(mundo.fotos_excluir) or ((mundo.foto_b,) if mundo.foto_b else ())
@@ -371,22 +380,23 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
             leer_qr = nav.quiere_qr                                      # frente a la meta: buscar QR (y en HD)
             if sim:
                 if (buscar or ver) and now >= t_cam:
-                    hd = args.hd or (leer_qr and not args.qr_sin_hd)
+                    hd = args.hd or (leer_qr and nav.quiere_hd and not args.qr_sin_hd)
                     img = robot.photo(hd=hd)
                     if ver:
                         caras, flechas, qrs = [], [], []
                     else:
                         caras, flechas, qrs = per.procesar(img, pos, scan, now, sens["w"], pos_scan[2], leer_qr=leer_qr,
                                                            cajas=robot.det() if args.cam_nn else None)
-                    pendientes.append((now + args.cam_latencia, now, img, caras, flechas, qrs))
-                    t_cam = now + (0.3 if ver else (max(args.cam_periodo, 0.3) if hd else args.cam_periodo))
+                    pendientes.append((now + (args.cam_latencia_hd if hd else args.cam_latencia), now, img, caras,
+                                       flechas, qrs))
+                    t_cam = now + (0.3 if ver else (args.cam_periodo_hd if hd else args.cam_periodo))
                 listos = [p[1:] for p in pendientes if p[0] <= now]
                 pendientes = [p for p in pendientes if p[0] > now]
                 cam_ok = robot.camara_ok
             else:
                 cam.activa = buscar or ver
                 cam.solo_ver = ver
-                cam.qr, cam.hd_qr = leer_qr, not args.qr_sin_hd
+                cam.qr, cam.hd_qr = leer_qr, nav.quiere_hd and not args.qr_sin_hd
                 listos = cam.recoger()
                 cam_ok = cam.t_ok is not None and now - cam.t_ok < 6.0
             for t_foto, img, caras, flechas, qrs in listos:
@@ -497,10 +507,13 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
             except Exception as e:                                             # el video nunca tumba la corrida
                 print(f"[video] {type(e).__name__}: {e}", file=sys.stderr)
     t_ini = nav.t_inicio if nav.t_inicio is not None else t0
+    tiempos_cam = cam.resumen_tiempos() if cam is not None else None
+    if tiempos_cam:
+        print("[camara] ms promedio (n): " + ", ".join(f"{k} {v[0]} ({v[1]})" for k, v in tiempos_cam.items()), flush=True)
     res = dict(estado=nav.estado, nombre=nav.nombre, prob=round(nav.prob, 3), buscar=nav.cfg.buscar or None,
                palabra=nav.palabra, qrs_leidos=len(nav.qr_de), fotos_meta=len(nav.candidatas),
                tiempo=round((nav.t_fin or reloj()) - t_ini, 2),
-               tiempo_b=round(nav.t_b - t_ini, 2) if nav.t_b else None, fotos=fotos,
+               tiempo_b=round(nav.t_b - t_ini, 2) if nav.t_b else None, fotos=fotos, tiempos_camara=tiempos_cam,
                flechas=[(s.dir(), s.n, s.usada) for s in nav.sen.lista], log=nav.log)
     if grab is not None:
         res["video"] = str(ruta_video) if ruta_video else None
@@ -539,6 +552,9 @@ def parse(argv=None):
                     help="persona a buscar entre las fotos de la meta (como en datos/rostros, sin importar tildes); "
                          "lee el QR de su foto y anuncia la palabra. En el simulador con +K: la del mundo")
     ap.add_argument("--sin-qr", action="store_true", help="con --buscar: no leer el QR (anuncia el nombre)")
+    ap.add_argument("--n-fotos", type=int, default=0, metavar="N",
+                    help="con --buscar: cuantas fotos hay en la meta, si se sabe. Vistas las N, va a la mas parecida "
+                         "a la buscada sin dar mas vueltas (0 = no se sabe)")
     ap.add_argument("--qr-sin-hd", action="store_true",
                     help="no pedir fotos HD para leer el QR (con HD se lee desde ~1.4 m; sin HD, desde ~0.5 m)")
     ap.add_argument("--persona", default=None, help="(--sim) quien esta en la foto de B (defecto: al azar)")
@@ -572,6 +588,14 @@ def parse(argv=None):
                     help="(--sim) imitar la deteccion de caras EN la camara (chip de la OAK-D): YuNet solo en recortes")
     ap.add_argument("--cam-periodo", type=float, default=None, help="(--sim) s entre fotos (defecto 0.15, con --hd 0.3)")
     ap.add_argument("--cam-latencia", type=float, default=0.15, help="(--sim) s de retraso de cada foto")
+    ap.add_argument("--cam-periodo-hd", type=float, default=None, help="(--sim) s entre fotos HD (pc 0.3, pi 4.0)")
+    ap.add_argument("--cam-latencia-hd", type=float, default=None, help="(--sim) s de retraso de cada foto HD (pi 3.6)")
+    ap.add_argument("--tiempos", choices=("pi", "pc"), default="pi",
+                    help="(--sim) tiempos de la camara: pi = como en la Raspberry (19/11: preview cada ~0.5 s, HD ~4 s; "
+                         "defecto) | pc = como en una PC (preview cada 0.15 s)")
+    ap.add_argument("--velo", type=float, default=0.12, help="(--sim) lente sucia: 0 = limpia (19/11: algo sucia)")
+    ap.add_argument("--exposicion", type=float, default=0.03,
+                    help="(--sim) s de exposicion: desenfoque al girar (0 = sin desenfoque de movimiento)")
     ap.add_argument("--camara-caida", action="store_true", help="(--sim) la camara no da imagenes")
     ap.add_argument("--mudo", action="store_true", help="no anunciar en voz alta (solo pantalla)")
     ap.add_argument("--no-guardar", action="store_true", help="no guardar el registro de la corrida")
@@ -605,13 +629,22 @@ def crear_sim(args):
     hd = args.hd or bool(mundo.qr and not args.qr_sin_hd)                # con QR: la camara HD existe
     robot = SimRobot(mundo, hfov=args.hfov, camara_ok=not args.camara_caida,
                      foto_hd=(1280, 720, args.hfov_hd) if hd else None,
-                     odom_ruido=args.odom_ruido, odom_sesgo=args.odom_sesgo, cam_nn=args.cam_nn)
+                     odom_ruido=args.odom_ruido, odom_sesgo=args.odom_sesgo, cam_nn=args.cam_nn,
+                     velo=getattr(args, "velo", 0.0), exposicion=getattr(args, "exposicion", 0.0))
     return mundo, robot
+
+
+def _sigterm(*_):
+    raise KeyboardInterrupt
 
 
 def main(argv=None):
     args = parse(argv)
-    args.vel = min(args.vel, 0.31)
+    # systemd / pkill mandan SIGTERM: que la carrera termine como con Ctrl+C (cierra el video, guarda el registro)
+    signal.signal(signal.SIGTERM, _sigterm)
+    # tope del Create 3: 0.31 m/s de fabrica, 0.46 con `safety_override: full` (y el puente con --max-linear 0.46,
+    # ver robot/preparar.sh --rapido). Antes se recortaba a 0.31 aqui y --vel 0.45 no hacia nada en el robot
+    args.vel = min(args.vel, 0.46)
     if args.sim:
         mundo, robot = crear_sim(args)
         if mundo.rostros:

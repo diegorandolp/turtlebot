@@ -262,7 +262,7 @@ class PuntaAPunta(unittest.TestCase):
     def test_croquis_con_seis_fotos(self):
         import carrera
         args = carrera.parse(["--sim", "--go", "--no-gui", "--mudo", "--no-guardar", "--modelo", "mbf",
-                              "--mundo", "croquis+6"])
+                              "--mundo", "croquis+6", "--tiempos", "pc"])   # la logica; los tiempos de la Pi: banco
         m, robot = carrera.crear_sim(args)
         r = carrera.correr(robot, args, sim=True, gui=False, mundo=m, max_t=180)
         self.assertTrue(r["exito"], r["log"][-4:])
@@ -376,3 +376,89 @@ class CarasEnLaCamara(unittest.TestCase):
         caja = (c.caja[0] / W, c.caja[1] / H, (c.caja[0] + c.caja[2]) / W, (c.caja[1] + c.caja[3]) / H, 0.9)
         caras, _, _ = per.procesar(img, pose, scan, 10.4, cajas=[caja])  # con la caja de la camara
         self.assertEqual(len(caras), 1)
+
+
+class DecidirRapido(unittest.TestCase):
+    """19/11: con ~2 fotos/s en la Raspberry, esperar p >= 0.97 con peso 1 costaba ~35 s frente a la fila."""
+
+    def test_clara_con_dos_vistas_es_la_buscada(self):
+        nav = navegador()
+        for k in range(2):                                           # 2 vistas, 30 px: peso < 1 pero clara
+            nav.ver_cara(0.1 * k, cara(0.1 * k, (2.0, 0.0), "Caro Tres", px=30), 0.4)
+        self.assertEqual(nav.candidatas[0].estado, "objetivo")
+        self.assertEqual(nav.estado, ACERCAR)
+
+    def test_chica_no_alcanza_para_decidir_temprano(self):
+        nav = navegador()
+        for k in range(2):
+            nav.ver_cara(0.1 * k, cara(0.1 * k, (2.0, 0.0), "Caro Tres", px=16), 0.1)
+        self.assertNotEqual(nav.candidatas[0].estado, "objetivo")
+
+    def test_ranking_al_terminar_la_fila(self):
+        nav = navegador()
+        for k in range(2):                                           # dudosa: p ~0.6, no llega a 0.9
+            nav.ver_cara(0.1 * k, cara(0.1 * k, (2.0, 0.0), "Caro Tres", px=30, margen=0.08), 0.4)
+        for k in range(3):
+            nav.ver_cara(1 + 0.1 * k, cara(1 + 0.1 * k, (2.0, 0.5), "Ana Uno", px=30), 0.4)
+        nav._fila_completa = True                                    # ya se miraron todas las paredes
+        nav.estado = IDA
+        nav._elegir_candidata(2.0)
+        c = nav.candidatas[0]
+        self.assertTrue(c.por_ranking)
+        self.assertEqual(c.estado, "objetivo")
+        self.assertIs(nav.obj, c)
+
+    def test_hd_solo_si_la_preview_no_alcanzo(self):
+        nav = navegador()
+        for k in range(4):
+            nav.ver_cara(0.1 * k, cara(0.1 * k, (2.0, 0.0), "Caro Tres"), 1.0)
+        nav.estado = LEER_QR
+        nav._qr = dict(paso=0, t0=1.0, th0=0.0, t_ini=1.0, t_frente=1.0)
+        nav._t_ahora = 2.0
+        self.assertTrue(nav.quiere_qr)
+        self.assertFalse(nav.quiere_hd)                              # primero la preview (rapida en la Pi)
+        nav._t_ahora = 1.0 + nav.cfg.qr_preview_s + 0.5
+        self.assertTrue(nav.quiere_hd)
+
+    def test_qr_debajo_de_la_buscada_sin_ver_la_cara(self):
+        nav = navegador()
+        for k in range(4):
+            nav.ver_cara(0.1 * k, cara(0.1 * k, (2.0, 0.0), "Caro Tres"), 1.0)
+        nav.estado = LEER_QR
+        nav.obj = nav.candidatas[0]
+        nav.vot = nav.obj.vot
+        q = Obs("qr", 1.0, 0.0, 0.5, (2.0, 0.05), 60, (0, 0, 60, 60), texto="milestone_x", cara=None)
+        nav.ver_qr(1.0, q)
+        self.assertIsNone(nav.palabra)                               # una lectura sin cara no alcanza
+        nav.ver_qr(1.2, q)
+        self.assertEqual(nav.palabra, "milestone_x")
+
+
+class Tubo(unittest.TestCase):
+    """El circuito del 19/11 y lo que dijo el profe: fotos en los costados del callejon final, nunca al fondo."""
+
+    def test_fotos_en_los_dos_costados_con_qr_debajo(self):
+        for sem in (1, 2, 3):
+            m = construir(f"tubo:{sem}+5")
+            self.assertEqual(len(m.rostros), 5)
+            fotos = [k for k in m.carteles if k.tipo == "rostro"]
+            qrs = [k for k in m.carteles if k.tipo == "qr"]
+            self.assertEqual((len(fotos), len(qrs)), (5, 5))
+            for f, q in zip(fotos, qrs):
+                cf = (np.array(f.a) + np.array(f.b)) / 2
+                cq = (np.array(q.a) + np.array(q.b)) / 2
+                self.assertLess(float(np.linalg.norm(cf - cq)), 0.01)   # centrado debajo
+                self.assertLess(q.z1, f.z0 + 1e-6)                       # el QR abajo, la foto arriba
+            # las fotos van en DOS paredes paralelas (los costados): sus normales son opuestas o iguales
+            ns = []
+            for f in fotos:
+                e = np.array(f.b) - np.array(f.a)
+                ns.append(np.array([-e[1], e[0]]) / np.linalg.norm(e))
+            for n in ns:
+                self.assertGreater(abs(float(n @ ns[0])), 0.99)
+            self.assertGreaterEqual(sum(1 for f in m.carteles if f.tipo.startswith("flecha")), 1)
+
+    def test_paredes_con_textura_de_cajas(self):
+        m = construir("tubo:1")
+        self.assertTrue(all(p.textura is not None for p in m.paredes))
+        self.assertLessEqual(max(p.alto for p in m.paredes), 0.46)              # cajas bajas

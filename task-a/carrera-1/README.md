@@ -189,6 +189,49 @@ tienen en la misma esquina, la separación entre fotos, la altura de las fotos (
 suelo) y que las fotos HD lleguen (`camara_rgb.sh --hd`). Para eso: `probar_vision.py --qr --hd` con el
 robot quieto frente a las fotos.
 
+## Simulador como el laboratorio del 19/11 y heurísticas del tubo
+
+La primera carrera dentro de la Raspberry (19/11) y lo que dijo el profe cambiaron el simulador y la búsqueda:
+
+**Simulador (por defecto desde el 19/11):**
+- **Tiempos de la Raspberry** (`--tiempos pi`, defecto): una foto preview cada ~0.5 s (latencia 0.45 s) y una HD
+  cada ~4 s. `--tiempos pc` = lo de antes (preview cada 0.15 s). Sin esto las heurísticas se ajustaban a una PC.
+- Cajas **bajas** (30–45 cm) **con textura**: cartón gris-beige como lo ve la cámara, costuras, cinta, letras y logos
+  (Tambo, San José…), etiquetas, códigos de barra y a veces "este lado arriba" (flechitas que dan falsas
+  candidatas, como en el robot). Piso gris muy claro. Lente algo sucia (`--velo`) y desenfoque al girar
+  (`--exposicion`).
+- Fotos **chicas** (12–16 cm, la cara ~5 cm) con el **QR debajo y centrado** (no en la esquina).
+- Mundo **`tubo:N[+K]`**: 1–3 giros con señal de color (a veces una rama sin salida), cajas sueltas en los
+  pasillos y al final un callejón sin salida con las K fotos (defecto 5) **en los dos costados, nunca en el
+  fondo** (regla del profe).
+
+**Búsqueda (`navegador.py`):**
+- **Fila en las dos paredes**: si la primera foto está en un pasillo con pared enfrente (el tubo), la fila se
+  recorre por estaciones mirando una pared y después la otra (zigzag: medio giro menos por estación), desde
+  ~0.62 m (más cerca la cámara, a 13 cm del suelo, ya no ve la cara de un retrato de medio cuerpo). No se miran
+  aberturas (el LiDAR ve más allá) ni puntos detrás de una pared (pasado el fondo); en el tubo la fila sigue
+  hasta 3 puntos vacíos seguidos (puede haber huecos). Si la fila se armó desde afuera del tubo, se rearma
+  desde el primer punto (la pared de enfrente se mide mal desde afuera).
+- **Decidir antes**: una foto es la buscada con p ≥ 0.90 en ≥ 2 vistas y cara ≥ 24 px (antes p ≥ 0.97 con peso
+  1: en la Pi eso tomaba ~35 s); **ranking**: terminada la fila (o vistas las `--n-fotos N`, si se sabe), va a
+  la más parecida si tiene p ≥ 0.5 y 4 veces la segunda. Ya elegida, RECONOCER confirma al instante.
+- **Acercarse a una foto vista de refilón** (pared del costado) va por el mapa al punto de enfrente; una foto
+  que se miró de cerca y es otra no se vuelve a elegir.
+- **QR**: frente a la foto a 0.55 m, leído de la **preview** (el QR queda a la altura de la cámara: ~57 px); la
+  HD solo si en 5 s no se leyó (en la Pi cada HD tarda ~4 s y antes se pedía al acercarse). Un QR justo debajo
+  de la buscada cuenta aunque la cara ya no entre en la foto (2 lecturas). Sin flechas en la HD frente a la meta.
+
+**Resultados** (simulador, tiempos de la Pi, límite 3 min, 0 nombres y 0 palabras equivocadas):
+
+| Banco | Antes (código del 19/11) | Ahora |
+|---|---|---|
+| `tubo:1..12` (5 fotos en los costados) | 5/12 (42 %), mediana 134 s | **11/12 (92 %)**, mediana 121 s |
+| `tubo:1..16` + croquis + `lab:1..4+6` + `laberinto:1..3+4` | — | 19/24 (79 %), mediana 106 s |
+
+Lo que sigue costando: recorrer la fila con fotos chicas lleva ~3.5 s por punto (girar, quedarse ~1.1 s para
+2 fotos, avanzar). Con el robot medir cuántas fotos por segundo da de verdad (`[camara] ms promedio` al final
+del log de la carrera, también en el registro: `tiempos_camara`).
+
 ## Pruebas en simulación
 
 Tres niveles, del más rápido al más completo:
@@ -545,12 +588,14 @@ de apagar los sensores de desnivel, que en un piso plano no hacen nada; `backup_
 atrás). Cómo probarlo, en este orden, con el robot en una recta libre de 3 m:
 
 ```bash
-# en la PC con ROS (setup/tb4_connect.sh) o por SSH en el robot (source /etc/turtlebot4/setup.bash):
-ros2 param get /motion_control safety_override                 # none (de fabrica)
-ros2 param set /motion_control safety_override full            # vale hasta que se reinicie la Create 3
+bash robot/preparar.sh --rapido     # safety_override full + puente con --max-linear 0.46 (el puente recortaba a 0.31)
 python -m herramientas.monitor --drive                         # subir con + hasta 0.45 y ver que avanza a esa velocidad
-python task-a/carrera-1/carrera.py --undock --buscar "Nombre" --vel 0.45 --video   # la carrera a 0.45 en rectas
+CARRERA_ARGS="--vel 0.45" bash robot/desplegar_carrera.sh --correr "Nombre Apellido"   # la carrera a 0.45 en rectas
 ```
+
+Ojo (corregido el 19/11): hacian falta TRES cosas y solo estaba documentada una. `safety_override full` en la
+Create 3, el puente con `--max-linear 0.46` (su tope era 0.31) y `carrera.py` sin el recorte a 0.31 que tenia en
+`main()` (ya no esta: ahora el tope es 0.46). El profe confirmo que `safety_override` vale (es software).
 
 Qué mirar: que a 0.45 m/s frene antes de una caja (el puente frena a 0.28 m; a 0.45 m/s la distancia de
 parada es ~0.1 m, alcanza) y que la odometría no empeore (patinar al arrancar). Si pasa las dos, usar

@@ -35,7 +35,7 @@ def duro(mundo):
     import numpy as np
     r = np.random.default_rng(zlib.crc32(mundo.encode()))
     return ["--odom-sesgo", f"{r.uniform(-0.04, 0.04):.3f}", "--odom-ruido", "0.02",
-            "--cam-periodo", f"{r.uniform(0.2, 0.35):.2f}", "--cam-latencia", f"{r.uniform(0.2, 0.4):.2f}"]
+            "--cam-periodo", f"{r.uniform(0.5, 0.75):.2f}", "--cam-latencia", f"{r.uniform(0.45, 0.7):.2f}"]
 
 
 def una(mundo, opciones, max_t, videos=None, videos_todos=False, modo_duro=False):
@@ -71,6 +71,9 @@ def resumen(rs, titulo):
     print(f"\n== {titulo}: {len(ok)}/{n} exitos ({100 * len(ok) / max(n, 1):.0f}%)")
     if t:
         print(f"   tiempo (exitos): mediana {t[len(t) // 2]:.1f} s, min {t[0]:.1f}, max {t[-1]:.1f}")
+        tb = sorted(r["tiempo_b"] for r in ok if r.get("tiempo_b"))
+        if tb:
+            print(f"   reconocida a los (exitos): mediana {tb[len(tb) // 2]:.1f} s, max {tb[-1]:.1f}")
     print(f"   choques: {sum(r.get('choques') or 0 for r in rs)} en total, "
           f"{sum(1 for r in rs if (r.get('choques') or 0) > 0)} corridas con choque")
     print(f"   nombre equivocado: {len(mal)}" + "".join(f"  [{r['mundo']}: {r['persona']} -> {r['nombre']}]" for r in mal))
