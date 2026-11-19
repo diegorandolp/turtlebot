@@ -86,7 +86,7 @@ LiDAR (7 Hz) + odometría ─► mapa (slam-1) y "carriles" libres ────�
    - **HECHO**: en A (a < 22 cm): para, anuncia el nombre en voz alta y en grande en la ventana.
    - **EXPLORAR** (plan B): el explorador de fronteras y cobertura de cámara de auto-1.
 4. **Reconocimiento**: ver [reconocimiento/README.md](../../reconocimiento/README.md) (ArcFace con OpenCV,
-   galería de 17 personas, ≥ 98 % de acierto por foto desde caras de 24 px).
+   galería de 20 personas: 95 % por foto y 97 % por voto con caras de 24 px, 99 % desde 32 px).
 
 ## Reglas del laboratorio: varias fotos y QR (`--buscar`)
 

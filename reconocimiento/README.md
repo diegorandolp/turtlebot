@@ -7,7 +7,7 @@ y la Tarea B (el reconocimiento es el mismo). Todo corre en la PC con **OpenCV**
 ```text
 foto del robot ──► YuNet ──► 5 puntos ──► alinear 112x112 ──► ArcFace ──► vector 512-D ──► similitud ──► votación
  (250x250 o HD)    (caras)   (ojos, nariz,  (plantilla de       (+ espejo)                  con la galería  entre fotos
-                              boca)          ArcFace)                                       (17 personas)
+                              boca)          ArcFace)                                       (20 personas)
 ```
 
 1. **Detección (YuNet)**: encuentra la cara y 5 puntos. Las imágenes chicas (la preview de 250×250) se
@@ -17,12 +17,12 @@ foto del robot ──► YuNet ──► 5 puntos ──► alinear 112x112 ─�
    - `mbf` (por defecto si no hay R50): MobileFaceNet entrenado en WebFace600K, 13 MB, **está en el repo**.
    - `r50`: ResNet-50 (WebFace600K), 174 MB, mejor con caras muy chicas. No cabe en el repo (ver abajo).
    - `auto` (lo que usa carrera-1): `r50` si está instalado, si no `mbf`.
-4. **Galería**: un vector por foto de [`datos/rostros/`](../datos/rostros) (17 personas, 94 fotos). Para cada
+4. **Galería**: un vector por foto de [`datos/rostros/`](../datos/rostros) (20 personas, 110 fotos; congelada el 19/11 por el profe). Para cada
    persona cuenta su foto más parecida (vecino más cercano).
 5. **Votación** (`Votacion`): cada foto del robot suma log-probabilidades `softmax(similitud / 0.04)`,
    pesadas por el tamaño de la cara (una cara de 14 px pesa 0.15; desde 56 px, 1). Se decide cuando el
    líder supera 0.97 de probabilidad con al menos 2 fotos, o al juntar 8 fotos. **Conjunto cerrado**: la
-   respuesta siempre es una de las 17 personas, nunca "desconocido" (la persona de B es de la clase).
+   respuesta siempre es una de las 20 personas, nunca "desconocido" (la persona de B es de la clase).
 
 ## Qué tan bien funciona
 

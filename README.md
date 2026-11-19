@@ -37,7 +37,7 @@ turtlebot67/
 │   └── camara/        Lanzar la cámara solo en color (apaño USB) y con imagen HD
 ├── task-b/gestos-1/   Tarea B: conducir con gestos de la mano (webcam de la PC)
 ├── reconocimiento/    Reconocimiento facial común a A y B (YuNet + ArcFace con OpenCV, galería, votación, voz)
-├── datos/rostros/     Fotos de las 17 personas posibles en B (una carpeta por persona)
+├── datos/rostros/     Fotos de las 20 personas posibles en B (galeria congelada el 19/11) (una carpeta por persona)
 ├── tb4/               Librería común: protocolo UDP + cliente (from tb4 import TB4Client)
 ├── robot/             Lo que corre o se gestiona en el robot: puente, despliegue, inicio de sesión, cámara
 ├── herramientas/      Utilidades para la PC (monitor del LiDAR y del estado)

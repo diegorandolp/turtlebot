@@ -43,9 +43,28 @@ def galeria_path(modelo):
     return MODELOS / f"galeria_{modelo}.npz"
 
 
+def personas_en_datos():
+    """Nombres ('Nombre Apellido') de las carpetas de datos/rostros que tienen fotos ([] si no esta la carpeta)."""
+    if not ROSTROS.is_dir():
+        return []
+    return sorted(d.name.replace("_", " ") for d in ROSTROS.iterdir()
+                  if d.is_dir() and any(f.suffix.lower() in (".jpg", ".jpeg", ".png") for f in d.iterdir()))
+
+
+def galeria_al_dia(modelo):
+    """True si la galeria del modelo existe y tiene a todas las personas de datos/rostros (si esa carpeta esta;
+    en el robot no se copian las fotos y se confia en la galeria)."""
+    path = galeria_path(modelo)
+    if not path.exists():
+        return False
+    faltan = set(personas_en_datos()) - {str(n) for n in np.load(path, allow_pickle=False)["nombres"]}
+    return not faltan
+
+
 def modelo_auto():
-    """'r50' si esta instalado (mejor con caras chicas, 174 MB fuera del repo), si no 'mbf' (en el repo)."""
-    return "r50" if EMBEBEDORES["r50"].exists() and galeria_path("r50").exists() else "mbf"
+    """'r50' si esta instalado (mejor con caras chicas, 174 MB fuera del repo) y su galeria esta al dia con
+    datos/rostros; si no 'mbf' (en el repo). Rehacer la de r50: python -m reconocimiento.galeria --modelo r50."""
+    return "r50" if EMBEBEDORES["r50"].exists() and galeria_al_dia("r50") else "mbf"
 
 
 def nombre_bonito(carpeta):
