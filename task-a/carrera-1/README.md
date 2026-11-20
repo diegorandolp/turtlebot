@@ -86,7 +86,7 @@ LiDAR (7 Hz) + odometría ─► mapa (slam-1) y "carriles" libres ────�
    - **HECHO**: en A (a < 22 cm): para, anuncia el nombre en voz alta y en grande en la ventana.
    - **EXPLORAR** (plan B): el explorador de fronteras y cobertura de cámara de auto-1.
 4. **Reconocimiento**: ver [reconocimiento/README.md](../../reconocimiento/README.md) (ArcFace con OpenCV,
-   galería de 17 personas, ≥ 98 % de acierto por foto desde caras de 24 px).
+   galería de 20 personas: 95 % por foto y 97 % por voto con caras de 24 px, 99 % desde 32 px).
 
 ## Reglas del laboratorio: varias fotos y QR (`--buscar`)
 
@@ -188,6 +188,66 @@ palabra correcta, de vuelta a < 35 cm de A.
 tienen en la misma esquina, la separación entre fotos, la altura de las fotos (la cámara está a ~13 cm del
 suelo) y que las fotos HD lleguen (`camara_rgb.sh --hd`). Para eso: `probar_vision.py --qr --hd` con el
 robot quieto frente a las fotos.
+
+## Simulador como el laboratorio del 19/11 y heurísticas del tubo
+
+La primera carrera dentro de la Raspberry (19/11) y lo que dijo el profe cambiaron el simulador y la búsqueda:
+
+**Simulador (por defecto desde el 19/11):**
+- **Tiempos de la Raspberry** (`--tiempos pi`, defecto): una foto preview cada ~0.5 s (latencia 0.45 s) y una HD
+  cada ~4 s. `--tiempos pc` = lo de antes (preview cada 0.15 s). Sin esto las heurísticas se ajustaban a una PC.
+- Cajas **bajas** (30–45 cm) **con textura**: cartón gris-beige como lo ve la cámara, costuras, cinta, letras y logos
+  (Tambo, San José…), etiquetas, códigos de barra y a veces "este lado arriba" (flechitas que dan falsas
+  candidatas, como en el robot). Piso gris muy claro. Lente algo sucia (`--velo`) y desenfoque al girar
+  (`--exposicion`).
+- Fotos **chicas** (12–16 cm, la cara ~5 cm) con el **QR debajo y centrado** (no en la esquina).
+- Mundo **`tubo:N[+K]`**: 1–3 giros con señal de color (a veces una rama sin salida), cajas sueltas en los
+  pasillos y al final un callejón sin salida con las K fotos (defecto 5) **en los dos costados, nunca en el
+  fondo** (regla del profe).
+
+**Búsqueda (`navegador.py`):**
+- **Fila en las dos paredes**: si la primera foto está en un pasillo con pared enfrente (el tubo), la fila se
+  recorre por estaciones mirando una pared y después la otra (zigzag: medio giro menos por estación), desde
+  ~0.62 m (más cerca la cámara, a 13 cm del suelo, ya no ve la cara de un retrato de medio cuerpo). No se miran
+  aberturas (el LiDAR ve más allá) ni puntos detrás de una pared (pasado el fondo); en el tubo la fila sigue
+  hasta 3 puntos vacíos seguidos (puede haber huecos). Si la fila se armó desde afuera del tubo, se rearma
+  desde el primer punto (la pared de enfrente se mide mal desde afuera).
+- **Decidir antes**: una foto es la buscada con p ≥ 0.90 en ≥ 2 vistas y cara ≥ 24 px (antes p ≥ 0.97 con peso
+  1: en la Pi eso tomaba ~35 s); **ranking**: terminada la fila (o vistas las `--n-fotos N`, si se sabe), va a
+  la más parecida si tiene p ≥ 0.5 y 4 veces la segunda. Ya elegida, RECONOCER confirma al instante.
+- **Acercarse a una foto vista de refilón** (pared del costado) va por el mapa al punto de enfrente; una foto
+  que se miró de cerca y es otra no se vuelve a elegir.
+- **QR**: frente a la foto a 0.55 m, leído de la **preview** (el QR queda a la altura de la cámara: ~57 px); la
+  HD solo si en 5 s no se leyó (en la Pi cada HD tarda ~4 s y antes se pedía al acercarse). Un QR justo debajo
+  de la buscada cuenta aunque la cara ya no entre en la foto (2 lecturas). Sin flechas en la HD frente a la meta.
+
+**Circuitos a mano: `herramientas/editor_mapas.html`.** Se abre en el navegador (doble clic): se dibujan
+paredes y cajas sobre una rejilla de 10 cm, la salida A, las señales (dirección y color) y las fotos (persona
+fija o al azar, cuál es la buscada), pegadas a la pared más cercana. "Descargar" o "Copiar" da el JSON; se
+guarda en `task-a/carrera-1/mis_mapas/` y se corre con `--mundo mapa:mis_mapas/<nombre>.json` (también en
+`banco_pruebas.py --mundos mapa:mis_mapas/a.json mapa:mis_mapas/a.json@2 ...`; `@N` = otra semilla: otras
+personas al azar y otros QR). Ejemplo: `mis_mapas/ejemplo_19_11.json`.
+
+**Vuelta rápida: `--turbo`.** En la vuelta (camino ya conocido) va a 0.45 m/s y mira más adelante en la ruta
+(0.6 m + 1.6 × (v − 0.2): ~1 m a 0.45 m/s), así empieza a doblar antes y en curva en vez de frenar en la esquina
+(la ventana dinámica sigue revisando cada arco contra el LiDAR). En el robot necesita `robot/preparar.sh --rapido`
+(sin eso la Create 3 se queda en 0.31 y no pasa nada); en el robot: `CARRERA_ARGS="--turbo"`.
+
+**Resultados** (simulador, tiempos de la Pi, límite 3 min, 0 nombres y 0 palabras equivocadas):
+
+| Banco | Antes (código del 19/11) | Ahora |
+|---|---|---|
+| `tubo:1..12` (5 fotos en los costados) | 5/12 (42 %), mediana 134 s | **11/12 (92 %)**, mediana 121 s |
+| `tubo:1..16` + croquis + `lab:1..4+6` + `laberinto:1..3+4` | — | 19/24 (79 %), mediana 106 s |
+
+Con las fotos **bajas y chicas** como las del 19/11 (QR en el piso, foto hasta ~25 cm, 10–13 cm de ancho) y
+mirando la fila desde 0.5 m: 25 mundos (tubo 1–16, croquis, lab 1–4, laberinto 1–3, `mapa:ejemplo_19_11`)
+**19/25 (76 %), mediana 112 s** con `--turbo`; `--turbo` baja la vuelta de 17.1 s a 12.3 s de mediana
+(−28 %, 0 choques) sin cambiar la ida.
+
+Lo que sigue costando: recorrer la fila con fotos chicas lleva ~3.5 s por punto (girar, quedarse ~1.1 s para
+2 fotos, avanzar). Con el robot medir cuántas fotos por segundo da de verdad (`[camara] ms promedio` al final
+del log de la carrera, también en el registro: `tiempos_camara`).
 
 ## Pruebas en simulación
 
@@ -474,6 +534,8 @@ después (traer el video). Todo está en `robot/desplegar_carrera.sh` (variables
 ```bash
 robot/desplegar_carrera.sh                   # 1) copia tb4/, reconocimiento/ (modelos mbf), slam-1, auto-1, carrera-1 a ~/turtlebot
 robot/desplegar_carrera.sh --instalar        # 2) una vez, con internet en el robot: numpy + opencv-contrib-python-headless
+robot/desplegar_carrera.sh --bajar-ruedas    #    sin internet en el lab: bajar antes las ruedas (PC con internet, 60 MB)...
+robot/desplegar_carrera.sh --instalar-offline  #    ...y copiarlas e instalarlas en el robot sin red (con pip o descomprimiendo)
 robot/desplegar_carrera.sh --verificar       # 3) verificar_pi.py EN el robot: librerías, modelos, puente, LiDAR, memoria, ms por pieza
 robot/desplegar_carrera.sh --medir           #    medir_cpu.py EN el robot: % de un núcleo a ritmo normal
 robot/desplegar_carrera.sh --servicio        # 4) instala robot/carrera.service: la carrera arranca sola al encender el robot
@@ -533,6 +595,30 @@ Una Raspberry Pi 4 es 3–5× más lenta por núcleo que esa PC y ya corre ROS, 
    (`cv2.setNumThreads(2)`); la Raspberry tiene 4.
 3. ¿Reescribir en Rust/C++? Ayuda poco: lo que queda caro son las redes (YuNet, ArcFace), que OpenCV ya corre
    en C++; la lógica en Python ya está por debajo del 10 % tras el punto 1.
+
+## Más rápido en las rectas (por probar con el robot)
+
+La ventana dinámica ya pide el máximo en las rectas despejadas (**0.30 m/s** en la ida, 0.31 en la vuelta) y
+baja la velocidad solo con paredes cerca (el puente frena desde 0.60 m) o en los giros. El tope de **0.31 m/s
+es el de seguridad de fábrica de la Create 3**; con `safety_override: full` admite hasta **~0.46 m/s** (a cambio
+de apagar los sensores de desnivel, que en un piso plano no hacen nada; `backup_only` solo libera la marcha
+atrás). Cómo probarlo, en este orden, con el robot en una recta libre de 3 m:
+
+```bash
+bash robot/preparar.sh --rapido     # safety_override full + puente con --max-linear 0.46 (el puente recortaba a 0.31)
+python -m herramientas.monitor --drive                         # subir con + hasta 0.45 y ver que avanza a esa velocidad
+CARRERA_ARGS="--vel 0.45" bash robot/desplegar_carrera.sh --correr "Nombre Apellido"   # la carrera a 0.45 en rectas
+```
+
+Ojo (corregido el 19/11): hacian falta TRES cosas y solo estaba documentada una. `safety_override full` en la
+Create 3, el puente con `--max-linear 0.46` (su tope era 0.31) y `carrera.py` sin el recorte a 0.31 que tenia en
+`main()` (ya no esta: ahora el tope es 0.46). El profe confirmo que `safety_override` vale (es software).
+
+Qué mirar: que a 0.45 m/s frene antes de una caja (el puente frena a 0.28 m; a 0.45 m/s la distancia de
+parada es ~0.1 m, alcanza) y que la odometría no empeore (patinar al arrancar). Si pasa las dos, usar
+`--vel 0.45` en la competencia; si no, se queda en 0.30. En el simulador (`croquis`, con señales) 0.45 baja el
+tiempo de 69 s a 50 s sin choques. El parámetro vuelve a `none` al reiniciar la Create
+3: hay que ponerlo en cada sesión (o dejarlo en `robot/tb4_inicio.sh`).
 
 ## Límites conocidos (lo que falta comprobar con el robot real)
 

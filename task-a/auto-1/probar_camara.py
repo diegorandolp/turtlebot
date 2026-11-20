@@ -11,6 +11,7 @@ El robot debe estar FUERA DEL DOCK (en el dock la camara esta apagada): saca el 
 Teclas de la ventana: q / Esc salir, s guardar la foto actual.
 """
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -35,7 +36,7 @@ def anotar(img, det, score_min):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("ip", nargs="?", default="192.168.0.103")
+    ap.add_argument("ip", nargs="?", default=os.environ.get("TB4_IP", "192.168.0.104"))
     ap.add_argument("--una", action="store_true", help="una foto, la guarda y sale")
     ap.add_argument("--foto", help="probar el detector con una imagen del disco (no usa el robot)")
     ap.add_argument("--undock", action="store_true", help="sacar el robot del dock primero (retrocede solo)")

@@ -102,18 +102,20 @@ class Percepcion:
             # la cara de una foto puede medir de 4 a 15 cm: el tamano casi no sirve, manda el LiDAR. Si el LiDAR
             # da menos, la foto no puede estar mas lejos (las cajas tapan igual a la camara, que va mas baja)
             rumbo, d, xy = self._ubicar(u, W, c.ancho, self.cara_m, pose, scan, dth, rango=(0.12, 1.6))
-            res = self.rec.resultado(img, c) if c.ancho >= self.min_px else None
+            # girando rapido la foto sale corrida (19/11): solo se ubica la cara, sin ArcFace (lo mas caro en la Pi)
+            res = self.rec.resultado(img, c) if c.ancho >= self.min_px and abs(w) < 1.0 else None
             caras.append(Obs("cara", t, rumbo, d, xy, c.ancho, c.caja, res=res,
                              borde_sup=c.caja[1] < 0.04 * H, girando=girando))
         cajas = [o.caja for o in caras]
-        for f in self.det_fl(img)[:4]:
+        # frente a la meta (leer_qr) las flechas ya no se usan: en una foto HD buscarlas es puro costo en la Pi
+        for f in ([] if (leer_qr and W > 400) else self.det_fl(img)[:4]):
             u, v = f.centro
             if any(x - 1.6 * w <= u <= x + 2.6 * w and y - 0.8 * h <= v <= y + 4.0 * h for x, y, w, h in cajas):
                 continue                                  # dentro de la hoja de una foto (ojos, ropa, el QR): no es flecha
             rumbo, d, xy = self._ubicar(u, W, f.lado, self.flecha_m, pose, scan, dth)
             flechas.append(Obs("flecha", t, rumbo, d, xy, f.lado, f.caja, dir=f.dir, girando=girando))
         qrs = []
-        if leer_qr and cajas:                             # un QR sin cara al lado no se usa (ver Carrera.ver_qr)
+        if leer_qr:                                       # sin cara al lado solo cuenta frente a la buscada (ver_qr)
             for q in buscar_qrs(img, cajas):
                 u = q.caja[0] + q.caja[2] / 2
                 rumbo, d, xy = self._ubicar(u, W, max(q.caja[2], 1), self.qr_m, pose, scan, dth, rango=(0.4, 1.8))
@@ -141,6 +143,9 @@ class Objetivo:
         self.estado = "pendiente"   # con --buscar: pendiente | objetivo | otra
         self.id = 0
         self.t_ignorar = -1e9       # con --buscar: no elegirla hasta este instante (no se la encontro)
+        self.por_ranking = False    # con --buscar: elegida como la buscada por ser la mas parecida (ver navegador)
+        self.descartada = False     # con --buscar: se la miro de cerca y es otra persona
+        self.intentos_frente = 0    # con --buscar: veces que se fue a mirarla de frente porque se la veia de costado
 
     def agregar(self, o, peso, pose=None):
         if not o.girando or self.xy is None:
@@ -240,6 +245,9 @@ class CamaraHilo:
         self.ultimo_error = ""
         self.t_ok = None
         self.activa = True
+        # tiempos medidos (s): pedir la foto al puente y procesarla, por tipo -> [suma, n]. En la Raspberry el
+        # 19/11 cada foto HD tardo ~4 s en total: esto dice si es el puente (conversion + UDP) o el procesado
+        self.tiempos = {k: [0.0, 0] for k in ("foto", "foto_hd", "proc", "proc_hd", "proc_qr", "proc_qr_hd")}
         self._run = True
         self._t = threading.Thread(target=self._loop, daemon=True)
         self._t.start()
@@ -252,8 +260,10 @@ class CamaraHilo:
             (pose, scan, th_scan, w), t = self.sensores(), time.monotonic()
             try:
                 hd = (self.hd or (self.qr and self.hd_qr)) and self.hd_falla < 2
+                t_pedir = time.monotonic()
                 try:
                     img = self.robot.photo(timeout=2.0, hd=True) if hd else self.robot.photo(timeout=2.0)
+                    self._medir("foto_hd" if hd else "foto", time.monotonic() - t_pedir)
                     if hd:
                         self.hd_falla = 0
                 except Exception:
@@ -277,13 +287,26 @@ class CamaraHilo:
                 time.sleep(0.25)                          # ~3 fotos/s alcanzan para ver
             else:
                 cajas = self.robot.det() if hasattr(self.robot, "det") else None    # caras detectadas en la camara
+                t_proc = time.monotonic()
                 caras, flechas, qrs = self.per.procesar(img, pose, scan, t, w, th_scan, leer_qr=self.qr,
                                                         cajas=cajas)
+                grande = img.shape[1] > 400
+                self._medir(("proc_qr" if self.qr else "proc") + ("_hd" if grande else ""), time.monotonic() - t_proc)
             with self.lock:
                 self.resultados.append((t, img, caras, flechas, qrs))
                 self.ultima_img = (img, caras, flechas)
                 self.fotos += 1
                 self.t_ok = time.monotonic()
+
+    def _medir(self, que, dt):
+        with self.lock:
+            self.tiempos[que][0] += dt
+            self.tiempos[que][1] += 1
+
+    def resumen_tiempos(self):
+        """{que: (ms promedio, n)} de lo medido (solo lo que paso al menos una vez)."""
+        with self.lock:
+            return {k: (round(1000 * s / n), n) for k, (s, n) in self.tiempos.items() if n}
 
     def recoger(self):
         with self.lock:

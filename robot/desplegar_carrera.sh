@@ -3,6 +3,8 @@
 #
 #   robot/desplegar_carrera.sh                 # 1) copia el codigo y los modelos a ~/turtlebot en el robot
 #   robot/desplegar_carrera.sh --instalar      # 2) instala numpy + opencv-contrib-python-headless en el robot (una vez, con internet)
+#   robot/desplegar_carrera.sh --instalar-offline   # 2b) lo mismo SIN internet en el robot: copia las ruedas de robot/ruedas_pi/
+#        (bajarlas antes en la PC con internet:  robot/desplegar_carrera.sh --bajar-ruedas )
 #   robot/desplegar_carrera.sh --verificar     # 3) corre verificar_pi.py en el robot (modelos, puente, CPU, memoria)
 #   robot/desplegar_carrera.sh --medir         #    medir_cpu.py en el robot (ms por pieza y % de un nucleo)
 #   robot/desplegar_carrera.sh --correr "Nombre Apellido"   # 4) arranca la carrera en el robot (en pausa: ver --go)
@@ -20,11 +22,11 @@
 #   robot/desplegar_carrera.sh --sin-servicio  # lo desinstala (para volver a --correr a mano)
 #
 # Requiere el puente corriendo en el robot (robot/tb4_inicio.sh o robot/deploy_bridge.sh): la carrera le habla
-# en 127.0.0.1. Variables: TB4_IP (192.168.0.103), SSHPASS (si tienes sshpass), CARRERA_ARGS (extra para carrera.py,
+# en 127.0.0.1. Variables: TB4_IP (192.168.0.104), SSHPASS (si tienes sshpass), CARRERA_ARGS (extra para carrera.py,
 # p. ej. CARRERA_ARGS="--hd --cam-periodo 0.3").
 set -euo pipefail
 
-IP="${TB4_IP:-192.168.0.103}"
+IP="${TB4_IP:-192.168.0.104}"
 TARGET="ubuntu@$IP"
 DIR="turtlebot"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,10 +48,11 @@ case "$MODE" in
     for f in reconocimiento/modelos/yunet_2023mar.onnx reconocimiento/modelos/arcface_mbf.onnx reconocimiento/modelos/galeria_mbf.npz; do
       [ -f "$f" ] || { echo "[FALLA] falta $f (ver reconocimiento/README.md)"; exit 1; }
     done
-    echo "[..] copiando a $TARGET:~/$DIR (codigo + modelos, sin fotos ni corridas; ~20 MB)"
+    echo "[..] copiando a $TARGET:~/$DIR (codigo + modelos + 1 persona para medir_cpu, sin corridas; ~20 MB)"
     tar czf - --exclude='__pycache__' --exclude='corridas' --exclude='fotos' --exclude='mapas' --exclude='*.mp4' \
         --exclude='reconocimiento/modelos/*r50*' \
         tb4 reconocimiento task-a/slam-1 task-a/auto-1 task-a/carrera-1 requirements.txt robot/oakd_caras.json robot/oakd_caras.md \
+        datos/rostros/Thiago_Frias \
       | "${SSH[@]}" "$TARGET" "mkdir -p ~/$DIR && tar xzf - -C ~/$DIR && echo '[ok] copiado en ~/$DIR'"
     echo "Siguiente: $0 --instalar (solo la primera vez) y luego $0 --verificar"
     ;;
@@ -60,6 +63,30 @@ case "$MODE" in
       && python3 -c 'import cv2, numpy; print(\"[ok] OpenCV\", cv2.__version__, \"numpy\", numpy.__version__)'; \
       which espeak-ng >/dev/null && echo '[ok] espeak-ng (voz por un parlante USB en la Raspberry)' \
       || echo '[aviso] sin espeak-ng: sudo apt install espeak-ng  (solo hace falta si se conecta un parlante USB)'"
+    ;;
+  --bajar-ruedas)
+    # En la PC con internet: ruedas para la Raspberry (aarch64, Python 3.12 de Ubuntu 24.04). ~60 MB en robot/ruedas_pi/
+    mkdir -p "$ROOT/robot/ruedas_pi"
+    python3 -m pip download --only-binary=:all: --platform manylinux2014_aarch64 --platform manylinux_2_17_aarch64 \
+      --python-version 3.12 --implementation cp --abi cp312 -d "$ROOT/robot/ruedas_pi" \
+      "numpy<2.3" "opencv-contrib-python-headless>=4.8,<5" && ls -la "$ROOT/robot/ruedas_pi"
+    ;;
+  --instalar-offline)
+    RUEDAS="${RUEDAS:-$ROOT/robot/ruedas_pi}"
+    ls "$RUEDAS"/*.whl >/dev/null 2>&1 || { echo "[FALLA] no hay ruedas en $RUEDAS: antes, con internet, $0 --bajar-ruedas"; exit 1; }
+    "${SSH[@]}" "$TARGET" "mkdir -p ~/ruedas_pi"
+    "${SCP[@]}" "$RUEDAS"/*.whl "$TARGET:~/ruedas_pi/"
+    # Con pip: instala desde las ruedas sin tocar la red. Sin pip (Ubuntu minimo): descomprime las ruedas en el
+    # site-packages del usuario (una rueda es un zip; numpy y opencv no necesitan scripts de instalacion).
+    "${SSH[@]}" "$TARGET" "cd ~/ruedas_pi && PV=\$(python3 -c 'import sys; print(f\"{sys.version_info[0]}.{sys.version_info[1]}\")') \
+      && echo \"Python \$PV\" && ls *.whl | grep -q \"cp\${PV/./}\|abi3\" || echo '[aviso] las ruedas son para Python 3.12; el robot tiene otro' ; \
+      if python3 -m pip --version >/dev/null 2>&1; then \
+        python3 -m pip install --user --break-system-packages --no-index --find-links . numpy opencv-contrib-python-headless; \
+      else \
+        echo '[aviso] sin pip: descomprimo las ruedas en ~/.local/lib/python'\$PV'/site-packages'; \
+        D=~/.local/lib/python\$PV/site-packages; mkdir -p \$D; for w in *.whl; do python3 -c \"import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])\" \$w \$D; done; \
+      fi; \
+      python3 -c 'import cv2, numpy; print(\"[ok] OpenCV\", cv2.__version__, \"numpy\", numpy.__version__, \"wechat\", hasattr(cv2, \"wechat_qrcode_WeChatQRCode\"))'"
     ;;
   --servicio)
     "${SCP[@]}" "$ROOT/robot/carrera.service" "$TARGET:/tmp/carrera.service"
@@ -88,10 +115,10 @@ case "$MODE" in
     NOMBRE="${1:-}"
     [ -n "$NOMBRE" ] || { echo "uso: $0 --correr \"Nombre Apellido\"   (como en datos/rostros/)"; exit 1; }
     # nohup + setsid: sigue corriendo aunque se cierre la SSH. Empieza en PAUSA: --go da la salida.
-    "${SSH[@]}" "$TARGET" "cd ~/$DIR && pkill -f '[c]arrera-1/carrera.py' 2>/dev/null; \
+    "${SSH[@]}" "$TARGET" "cd ~/$DIR && pkill -f '^python3 -u task-a/carrera-1/carrera[.]py' 2>/dev/null; \
       setsid nohup python3 -u task-a/carrera-1/carrera.py 127.0.0.1 --no-gui --undock --video --video-fps 4 --video-sin-h264 \
         --buscar '$NOMBRE' --go-archivo GO --go-boton --resultado-archivo RESULTADO.txt ${CARRERA_ARGS:-} > $LOG 2>&1 < /dev/null & \
-      sleep 2; pgrep -af '[c]arrera-1/carrera.py' >/dev/null && echo '[ok] carrera arrancada (en pausa)' || { tail -n 20 $LOG; exit 1; }"
+      sleep 2; pgrep -f '^python3 -u task-a/carrera-1/carrera[.]py' >/dev/null && echo '[ok] carrera arrancada (en pausa)' || { tail -n 20 $LOG; exit 1; }"
     echo "Ahora: $0 --go (o el BOTON 1 del robot) da la salida; $0 --escuchar para oir el anuncio en la PC"
     ;;
   --go)
@@ -108,7 +135,11 @@ case "$MODE" in
     "${SSH[@]}" "$TARGET" "pgrep -af '[c]arrera-1/carrera.py' || echo 'la carrera NO esta corriendo'; tail -n 25 $LOG 2>/dev/null"
     ;;
   --parar)
-    "${SSH[@]}" "$TARGET" "pkill -f '[c]arrera-1/carrera.py' && echo 'carrera detenida' || echo 'no estaba corriendo'"
+    # SIGINT (como Ctrl+C): la carrera frena, cierra el video y guarda el registro. Si en 6 s no termino, SIGTERM
+    "${SSH[@]}" "$TARGET" "if pkill -INT -f '[c]arrera-1/carrera.py'; then \
+        for i in 1 2 3 4 5 6; do sleep 1; pgrep -f '[c]arrera-1/carrera.py' >/dev/null || break; done; \
+        pkill -f '[c]arrera-1/carrera.py'; echo 'carrera detenida (video y registro guardados)'; \
+      else echo 'no estaba corriendo'; fi"
     ;;
   --video)
     mkdir -p "$ROOT/corridas_robot"

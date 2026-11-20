@@ -30,3 +30,6 @@ task-a/carrera-1/corridas/
 *.avi
 task-a/auto-1/fotos/
 task-a/carrera-1/fotos/
+
+# ruedas para la Raspberry (60 MB; robot/desplegar_carrera.sh --bajar-ruedas)
+robot/ruedas_pi/

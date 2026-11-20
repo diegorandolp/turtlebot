@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Editor de circuitos</title>
+<style>
+/* VOICE: herramienta de trabajo, sobria y exacta, como un plano de obra.
+   IDEA: la mesa de dibujo del laboratorio: piso claro con rejilla de 10 cm y cajas de carton vistas desde arriba.
+   PICTURE: el propio plano es la imagen; ocupa todo el ancho, las herramientas en una franja encima.
+   COLOUR and TYPE: piso gris claro, carton #b49a74, tinta casi negra, un solo acento verde para la salida A; Inter.
+   LAYOUT: barra de herramientas arriba, plano grande, panel de la pieza elegida y el JSON debajo. */
+:root{color-scheme:light dark;--bg:light-dark(#f2f2ef,#1b1b1a);--ink:light-dark(#1d1d1b,#ecebe6);--muted:light-dark(#6b6a65,#a3a29c);
+--line:light-dark(#d9d8d2,#3a3a37);--card:light-dark(#ffffff,#252523);--carton:#b49a74;--acento:#1f8a4c;--sel:#2a6fdb}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 Inter,system-ui,sans-serif;overflow-x:clip}
+header{padding:16px max(3vw,14px) 8px}
+h1{font-size:26px;line-height:1.1;margin:0 0 4px}
+.sub{color:var(--muted);margin:0;max-width:75ch}
+.bar{display:flex;flex-wrap:wrap;gap:6px;padding:8px max(3vw,14px);align-items:center;position:sticky;top:0;background:var(--bg);z-index:2;border-bottom:1px solid var(--line)}
+button,select,input{font:inherit;font-size:15px;min-height:40px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:6px 12px}
+button{cursor:pointer}button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--sel);outline-offset:2px}
+button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.sep{width:1px;height:28px;background:var(--line);margin:0 4px}
+main{padding:10px max(3vw,14px) 24px;display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:14px}
+@media(max-width:900px){main{grid-template-columns:minmax(0,1fr)}}
+.lienzo{position:relative;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;height:min(72vh,760px);touch-action:none}
+canvas{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair}
+.info{position:absolute;left:10px;bottom:8px;font-size:13px;color:var(--muted);background:color-mix(in srgb,var(--card) 85%,transparent);padding:2px 8px;border-radius:6px}
+aside{display:flex;flex-direction:column;gap:12px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px}
+.panel h2{font-size:16px;margin:0 0 8px}
+label{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:6px 0;font-size:14px}
+label input,label select{width:150px}
+textarea{width:100%;min-height:150px;font:12px/1.4 ui-monospace,Consolas,monospace;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);padding:8px}
+.ayuda{font-size:13px;color:var(--muted);margin:6px 0 0}
+.fila{display:flex;gap:6px;flex-wrap:wrap}
+.msg{font-size:13px;color:var(--acento);min-height:18px}
+kbd{font:12px ui-monospace,monospace;border:1px solid var(--line);border-radius:4px;padding:0 4px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Editor de circuitos para el simulador</h1>
+  <p class="sub">Dibuja paredes y cajas, pon la salida A, las señales y las fotos con su QR. Copia el JSON y córrelo con
+  <code>python task-a/carrera-1/carrera.py --sim --mundo mapa:mis_mapas/circuito.json --video</code>.
+  Rejilla de 10 cm; el círculo gris es el robot (34 cm).</p>
+</header>
+<div class="bar" id="bar">
+  <button data-h="pared" class="on" title="arrastrar: pared (tabique de carton)">Pared</button>
+  <button data-h="caja" title="arrastrar: caja rectangular">Caja</button>
+  <button data-h="salida" title="clic: A; arrastrar: hacia donde mira">Salida A</button>
+  <button data-h="senal" title="clic junto a una pared">Señal</button>
+  <button data-h="foto" title="clic junto a una pared">Foto + QR</button>
+  <button data-h="mover" title="arrastrar una pieza">Mover</button>
+  <button data-h="borrar" title="clic sobre una pieza">Borrar</button>
+  <span class="sep"></span>
+  <button id="deshacer" title="Ctrl+Z">Deshacer</button>
+  <button id="ejemplo">Ejemplo 19/11</button>
+  <button id="limpiar">Vaciar</button>
+</div>
+<main>
+  <div class="lienzo" id="lienzo"><canvas id="cv"></canvas><div class="info" id="info">x 0.00 · y 0.00 m</div></div>
+  <aside>
+    <div class="panel">
+      <h2>Al poner piezas</h2>
+      <label>Alto de pared/caja (m)<input id="alto" type="number" step="0.05" min="0.18" max="0.8" value="0.42"></label>
+      <label>Señal: dirección<select id="dir"><option value="der">derecha</option><option value="izq">izquierda</option><option value="arriba">recto</option></select></label>
+      <label>Señal: color<select id="color"><option value="negra">negra</option><option value="azul">azul</option><option value="roja">roja</option><option value="verde">verde</option></select></label>
+      <label>Foto: persona<select id="persona"></select></label>
+      <label>Foto: es la buscada<input id="buscada" type="checkbox" style="width:auto;min-height:0"></label>
+      <p class="ayuda">Las señales y fotos se pegan a la pared más cercana, mirando hacia donde hiciste clic. Sin buscada marcada, el simulador elige una al azar.</p>
+    </div>
+    <div class="panel">
+      <h2>JSON del circuito</h2>
+      <div class="fila"><button id="copiar">Copiar</button><button id="descargar">Descargar</button><button id="cargar">Cargar del texto</button>
+      <label style="margin:0"><input id="archivo" type="file" accept=".json,application/json" style="width:auto;min-height:0;border:0;padding:0"></label></div>
+      <div class="msg" id="msg"></div>
+      <textarea id="json" spellcheck="false"></textarea>
+      <p class="ayuda">Guárdalo como <code>task-a/carrera-1/mis_mapas/&lt;nombre&gt;.json</code>. <kbd>Supr</kbd> borra la pieza elegida, <kbd>Ctrl+Z</kbd> deshace.</p>
+    </div>
+  </aside>
+</main>
+<script>
+{
+const PERSONAS=["(al azar)","Alejandro Chipayo","Alvaro García","Angel Mora","Brigitte Rojas","Diego Quispe","Franklin Soncco","Jean Huaylla",
+"Juan Prochazka","Lando Veramendi","Leonardo Martinez","Luis Izaguirre","Manuel Silva","Marcelino Maita","Marcelo Rosillo","Melisa Rivera",
+"Mishelle Villarreal","Sergio Cortez","Sofia Salazar","Steve Ricapa","Thiago Frias"];
+const COLORES={negra:"#222",azul:"#1e4fa0",roja:"#c0302a",verde:"#2a8a2a"};
+const $=id=>document.getElementById(id);
+const cv=$("cv"),ctx=cv.getContext("2d");
+$("persona").innerHTML=PERSONAS.map(p=>`<option>${p}</option>`).join("");
+let mapa=nuevo(),hist=[],herr="pared",sel=null,arr=null,vista={s:90,ox:60,oy:0},raton={x:0,y:0};
+function nuevo(){return{version:1,paredes:[],cajas:[],inicio:null,senales:[],fotos:[]}}
+function guardarHist(){hist.push(JSON.stringify(mapa));if(hist.length>60)hist.shift()}
+function aM(px,py){return{x:(px-vista.ox)/vista.s,y:(cv.clientHeight-py-vista.oy)/vista.s}}
+function aP(x,y){return[vista.ox+x*vista.s,cv.clientHeight-vista.oy-y*vista.s]}
+const snap=v=>Math.round(v*20)/20;
+function tam(){const r=cv.getBoundingClientRect(),d=devicePixelRatio||1;cv.width=r.width*d;cv.height=r.height*d;ctx.setTransform(d,0,0,d,0,0);dibujar()}
+new ResizeObserver(tam).observe($("lienzo"));
+function segmentos(){const s=mapa.paredes.map((p,i)=>({a:p.a,b:p.b,t:"pared",i}));
+ mapa.cajas.forEach((c,i)=>{const P=[[c.x0,c.y0],[c.x1,c.y0],[c.x1,c.y1],[c.x0,c.y1]];for(let k=0;k<4;k++)s.push({a:P[k],b:P[(k+1)%4],t:"caja",i})});return s}
+function proy(p,a,b){const ex=b[0]-a[0],ey=b[1]-a[1],L2=ex*ex+ey*ey||1e-9;let t=((p.x-a[0])*ex+(p.y-a[1])*ey)/L2;t=Math.max(0,Math.min(1,t));
+ const q=[a[0]+t*ex,a[1]+t*ey];return{q,d:Math.hypot(p.x-q[0],p.y-q[1]),ex,ey}}
+function pegar(p){let mejor=null;for(const s of segmentos()){const r=proy(p,s.a,s.b);if(!mejor||r.d<mejor.d)mejor={...r,s}}
+ if(!mejor||mejor.d>0.6)return null;const L=Math.hypot(mejor.ex,mejor.ey);let n=[-mejor.ey/L,mejor.ex/L];
+ if((p.x-mejor.q[0])*n[0]+(p.y-mejor.q[1])*n[1]<0)n=[-n[0],-n[1]];return{x:+mejor.q[0].toFixed(3),y:+mejor.q[1].toFixed(3),nx:+n[0].toFixed(3),ny:+n[1].toFixed(3)}}
+function pieza(p){const cerca=(x,y,r)=>Math.hypot(p.x-x,p.y-y)<r;
+ for(let i=mapa.fotos.length-1;i>=0;i--){const f=mapa.fotos[i];if(cerca(f.x,f.y,0.18))return{t:"fotos",i}}
+ for(let i=mapa.senales.length-1;i>=0;i--){const f=mapa.senales[i];if(cerca(f.x,f.y,0.18))return{t:"senales",i}}
+ if(mapa.inicio&&cerca(mapa.inicio[0],mapa.inicio[1],0.22))return{t:"inicio"};
+ for(let i=mapa.cajas.length-1;i>=0;i--){const c=mapa.cajas[i];if(p.x>=c.x0-0.05&&p.x<=c.x1+0.05&&p.y>=c.y0-0.05&&p.y<=c.y1+0.05)return{t:"cajas",i}}
+ for(let i=mapa.paredes.length-1;i>=0;i--){const w=mapa.paredes[i];if(proy(p,w.a,w.b).d<0.08)return{t:"paredes",i}}return null}
+function borrar(k){if(!k)return;guardarHist();if(k.t==="inicio")mapa.inicio=null;else mapa[k.t].splice(k.i,1);sel=null;cambio()}
+cv.addEventListener("pointerdown",e=>{cv.setPointerCapture(e.pointerId);const r=cv.getBoundingClientRect(),p=aM(e.clientX-r.left,e.clientY-r.top);
+ const ps={x:snap(p.x),y:snap(p.y)};
+ if(e.button===1||e.shiftKey&&herr!=="mover"){arr={pan:true,cx:e.clientX,cy:e.clientY,ox:vista.ox,oy:vista.oy};return}
+ if(herr==="borrar"){borrar(pieza(p));return}
+ if(herr==="mover"){const k=pieza(p);sel=k;if(k){guardarHist();arr={mover:k,p0:ps,orig:JSON.stringify(k.t==="inicio"?mapa.inicio:mapa[k.t][k.i])}}dibujar();return}
+ if(herr==="senal"||herr==="foto"){const w=pegar(p);if(!w){aviso("Haz clic junto a una pared o caja (a menos de 60 cm)");return}guardarHist();
+  if(herr==="senal")mapa.senales.push({...w,dir:$("dir").value,color:$("color").value,z0:0.05});
+  else{const per=$("persona").value;if($("buscada").checked)mapa.fotos.forEach(f=>f.buscada=false);
+   mapa.fotos.push({...w,persona:per==="(al azar)"?"":per,buscada:$("buscada").checked})}cambio();return}
+ arr={p0:ps,p1:ps}});
+cv.addEventListener("pointermove",e=>{const r=cv.getBoundingClientRect(),p=aM(e.clientX-r.left,e.clientY-r.top);raton=p;
+ $("info").textContent=`x ${p.x.toFixed(2)} · y ${p.y.toFixed(2)} m`;if(!arr){dibujar();return}
+ if(arr.pan){vista.ox=arr.ox+(e.clientX-arr.cx);vista.oy=arr.oy-(e.clientY-arr.cy);dibujar();return}
+ const ps={x:snap(p.x),y:snap(p.y)};
+ if(arr.mover){const k=arr.mover,o=JSON.parse(arr.orig),dx=ps.x-arr.p0.x,dy=ps.y-arr.p0.y;
+  if(k.t==="inicio")mapa.inicio=[o[0]+dx,o[1]+dy,o[2]];else if(k.t==="paredes")mapa.paredes[k.i]={...o,a:[o.a[0]+dx,o.a[1]+dy],b:[o.b[0]+dx,o.b[1]+dy]};
+  else if(k.t==="cajas")mapa.cajas[k.i]={...o,x0:o.x0+dx,x1:o.x1+dx,y0:o.y0+dy,y1:o.y1+dy};
+  else{const w=pegar({x:p.x,y:p.y});if(w)mapa[k.t][k.i]={...o,...w}}dibujar();return}
+ arr.p1=ps;dibujar()});
+cv.addEventListener("pointerup",()=>{if(!arr)return;const a=arr;arr=null;if(a.pan)return;if(a.mover){cambio();return}
+ const {p0,p1}=a,alto=+$("alto").value||0.42;
+ if(herr==="pared"){if(Math.hypot(p1.x-p0.x,p1.y-p0.y)<0.1)return dibujar();guardarHist();mapa.paredes.push({a:[p0.x,p0.y],b:[p1.x,p1.y],alto})}
+ else if(herr==="caja"){const x0=Math.min(p0.x,p1.x),x1=Math.max(p0.x,p1.x),y0=Math.min(p0.y,p1.y),y1=Math.max(p0.y,p1.y);
+  if(x1-x0<0.05||y1-y0<0.05)return dibujar();guardarHist();mapa.cajas.push({x0,y0,x1,y1,alto})}
+ else if(herr==="salida"){guardarHist();const yaw=Math.hypot(p1.x-p0.x,p1.y-p0.y)>0.08?Math.atan2(p1.y-p0.y,p1.x-p0.x):(mapa.inicio?mapa.inicio[2]:0);
+  mapa.inicio=[p0.x,p0.y,+yaw.toFixed(3)]}cambio()});
+cv.addEventListener("wheel",e=>{e.preventDefault();const r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top,p=aM(mx,my);
+ vista.s=Math.max(30,Math.min(300,vista.s*(e.deltaY<0?1.12:1/1.12)));vista.ox=mx-p.x*vista.s;vista.oy=cv.clientHeight-my-p.y*vista.s;dibujar()},{passive:false});
+$("bar").addEventListener("click",e=>{const b=e.target.closest("button[data-h]");if(!b)return;herr=b.dataset.h;sel=null;
+ for(const x of document.querySelectorAll("button[data-h]"))x.classList.toggle("on",x===b);dibujar()});
+$("deshacer").onclick=()=>{if(hist.length){mapa=JSON.parse(hist.pop());sel=null;cambio(false)}};
+$("limpiar").onclick=()=>{guardarHist();mapa=nuevo();cambio()};
+$("ejemplo").onclick=()=>{guardarHist();mapa=ejemplo();cambio()};
+document.addEventListener("keydown",e=>{if(e.target.tagName==="TEXTAREA"||e.target.tagName==="INPUT")return;
+ if((e.ctrlKey||e.metaKey)&&e.key==="z"){e.preventDefault();$("deshacer").click()}if(e.key==="Delete"||e.key==="Backspace")borrar(sel)});
+function aviso(t){$("msg").textContent=t;clearTimeout(aviso.t);aviso.t=setTimeout(()=>$("msg").textContent="",3500)}
+function cambio(h=true){$("json").value=JSON.stringify(mapa,null,1);try{localStorage.setItem("editor-mapas",$("json").value)}catch(e){}dibujar()}
+$("copiar").onclick=async()=>{try{await navigator.clipboard.writeText($("json").value);aviso("Copiado")}catch(e){$("json").select();aviso("Selecciona y copia con Ctrl+C")}};
+let bajadas=null;
+if(window.claude&&window.claude.use)window.claude.use("downloads").then(d=>{bajadas=d}).catch(()=>{});
+$("descargar").onclick=async()=>{const txt=$("json").value;
+ if(bajadas){try{await bajadas.save({filename:"circuito.json",data:txt});aviso("Guardado circuito.json")}catch(e){aviso(e&&e.code==="declined"?"Descarga cancelada":"No se pudo descargar: usa Copiar")}return}
+ try{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([txt],{type:"application/json"}));
+ a.download="circuito.json";document.body.appendChild(a);a.click();a.remove();aviso("Descargando circuito.json (si no baja, usa Copiar)")}catch(e){aviso("Usa Copiar")}};
+function cargar(t){try{const m=JSON.parse(t);if(!m||!Array.isArray(m.paredes))throw 0;guardarHist();mapa={...nuevo(),...m};cambio();encuadrar();aviso("Cargado")}catch(e){aviso("Ese texto no es un circuito valido")}}
+$("cargar").onclick=()=>cargar($("json").value);
+$("archivo").onchange=e=>{const f=e.target.files[0];if(f)f.text().then(cargar)};
+function encuadrar(){const pts=[];mapa.paredes.forEach(p=>pts.push(p.a,p.b));mapa.cajas.forEach(c=>pts.push([c.x0,c.y0],[c.x1,c.y1]));if(mapa.inicio)pts.push(mapa.inicio);
+ if(!pts.length){vista={s:90,ox:60,oy:40};return dibujar()}const xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]),W=cv.clientWidth,H=cv.clientHeight;
+ const x0=Math.min(...xs)-0.4,x1=Math.max(...xs)+0.4,y0=Math.min(...ys)-0.4,y1=Math.max(...ys)+0.4;vista.s=Math.min(W/(x1-x0),H/(y1-y0));
+ vista.ox=(W-(x1-x0)*vista.s)/2-x0*vista.s;vista.oy=(H-(y1-y0)*vista.s)/2-y0*vista.s;dibujar()}
+function flecha(x,y,ang,col,L){const[a,b]=aP(x,y);ctx.save();ctx.translate(a,b);ctx.rotate(-ang);ctx.strokeStyle=col;ctx.fillStyle=col;ctx.lineWidth=2;
+ ctx.beginPath();ctx.moveTo(-L/2,0);ctx.lineTo(L/2,0);ctx.stroke();ctx.beginPath();ctx.moveTo(L/2,0);ctx.lineTo(L/2-7,-5);ctx.lineTo(L/2-7,5);ctx.fill();ctx.restore()}
+function dibujar(){const W=cv.clientWidth,H=cv.clientHeight,css=getComputedStyle(document.body),ink=css.color;ctx.clearRect(0,0,W,H);
+ const m0=aM(0,H),m1=aM(W,0);ctx.lineWidth=1;
+ for(let x=Math.floor(m0.x*10);x<=m1.x*10;x++){const[px]=aP(x/10,0);ctx.strokeStyle=x%10===0?"rgba(128,128,128,.45)":"rgba(128,128,128,.15)";ctx.beginPath();ctx.moveTo(px,0);ctx.lineTo(px,H);ctx.stroke()}
+ for(let y=Math.floor(m0.y*10);y<=m1.y*10;y++){const[,py]=aP(0,y/10);ctx.strokeStyle=y%10===0?"rgba(128,128,128,.45)":"rgba(128,128,128,.15)";ctx.beginPath();ctx.moveTo(0,py);ctx.lineTo(W,py);ctx.stroke()}
+ const es=(t,i)=>sel&&sel.t===t&&sel.i===i;
+ mapa.cajas.forEach((c,i)=>{const[a,b]=aP(c.x0,c.y1),[d,e]=aP(c.x1,c.y0);ctx.fillStyle="#b49a74";ctx.fillRect(a,b,d-a,e-b);
+  ctx.strokeStyle=es("cajas",i)?"#2a6fdb":"#6e5a3c";ctx.lineWidth=es("cajas",i)?3:1.5;ctx.strokeRect(a,b,d-a,e-b)});
+ mapa.paredes.forEach((w,i)=>{const[a,b]=aP(...w.a),[c,d]=aP(...w.b);ctx.strokeStyle=es("paredes",i)?"#2a6fdb":"#8a7352";ctx.lineWidth=Math.max(4,0.12*vista.s);
+  ctx.lineCap="round";ctx.beginPath();ctx.moveTo(a,b);ctx.lineTo(c,d);ctx.stroke()});
+ mapa.senales.forEach((s,i)=>{const[a,b]=aP(s.x+s.nx*0.06,s.y+s.ny*0.06),z=Math.max(10,0.22*vista.s);ctx.fillStyle="#fff";ctx.strokeStyle=es("senales",i)?"#2a6fdb":COLORES[s.color]||"#222";
+  ctx.lineWidth=2;ctx.fillRect(a-z/2,b-z/2,z,z);ctx.strokeRect(a-z/2,b-z/2,z,z);const into=Math.atan2(-s.ny,-s.nx),g=s.dir==="izq"?into+Math.PI/2:s.dir==="der"?into-Math.PI/2:into;
+  flecha(s.x+s.nx*0.06,s.y+s.ny*0.06,g,COLORES[s.color]||"#222",z*0.8)});
+ mapa.fotos.forEach((f,i)=>{const[a,b]=aP(f.x+f.nx*0.05,f.y+f.ny*0.05),z=Math.max(9,0.12*vista.s);ctx.fillStyle=f.buscada?"#e8a317":"#fff";
+  ctx.strokeStyle=es("fotos",i)?"#2a6fdb":"#333";ctx.lineWidth=2;ctx.beginPath();ctx.arc(a,b,z/2,0,7);ctx.fill();ctx.stroke();
+  ctx.fillStyle=ink;ctx.font="12px Inter,sans-serif";ctx.fillText((f.persona||"azar").split(" ")[0]+(f.buscada?" ★":""),a+z/2+3,b+4)});
+ if(mapa.inicio){const[x,y,t]=mapa.inicio,[a,b]=aP(x,y);ctx.strokeStyle="#1f8a4c";ctx.lineWidth=es("inicio")?4:2.5;ctx.beginPath();ctx.arc(a,b,0.17*vista.s,0,7);ctx.stroke();
+  flecha(x+Math.cos(t)*0.12,y+Math.sin(t)*0.12,t,"#1f8a4c",0.3*vista.s);ctx.fillStyle="#1f8a4c";ctx.font="bold 13px Inter,sans-serif";ctx.fillText("A",a-4,b-0.2*vista.s-4)}
+ if(arr&&!arr.pan&&!arr.mover){const{p0,p1}=arr;ctx.strokeStyle="#2a6fdb";ctx.lineWidth=2;ctx.setLineDash([6,4]);
+  if(herr==="pared"){const[a,b]=aP(p0.x,p0.y),[c,d]=aP(p1.x,p1.y);ctx.beginPath();ctx.moveTo(a,b);ctx.lineTo(c,d);ctx.stroke();
+   ctx.fillStyle=ink;ctx.fillText(Math.hypot(p1.x-p0.x,p1.y-p0.y).toFixed(2)+" m",c+8,d)}
+  else if(herr==="caja"){const[a,b]=aP(Math.min(p0.x,p1.x),Math.max(p0.y,p1.y)),[c,d]=aP(Math.max(p0.x,p1.x),Math.min(p0.y,p1.y));ctx.strokeRect(a,b,c-a,d-b);
+   ctx.fillStyle=ink;ctx.fillText(`${Math.abs(p1.x-p0.x).toFixed(2)} × ${Math.abs(p1.y-p0.y).toFixed(2)} m`,c+8,d)}
+  else if(herr==="salida"){const[a,b]=aP(p0.x,p0.y),[c,d]=aP(p1.x,p1.y);ctx.beginPath();ctx.moveTo(a,b);ctx.lineTo(c,d);ctx.stroke()}ctx.setLineDash([])}
+ if(herr!=="mover"&&herr!=="borrar"){const[a,b]=aP(raton.x,raton.y);ctx.strokeStyle="rgba(128,128,128,.6)";ctx.lineWidth=1;ctx.beginPath();ctx.arc(a,b,0.17*vista.s,0,7);ctx.stroke()}}
+function ejemplo(){const P=(a,b)=>({a,b,alto:0.42});return{version:1,
+ paredes:[P([0,0],[3.2,0]),P([3.2,0],[3.2,3.4]),P([0,0],[0,1]),P([0,1],[2.2,1]),P([2.2,1],[2.2,3.4]),P([2.2,3.4],[3.2,3.4])],
+ cajas:[{x0:1.1,y0:0,x1:1.4,y1:0.3,alto:0.35}],inicio:[0.35,0.5,0],
+ senales:[{x:3.2,y:0.5,nx:-1,ny:0,dir:"izq",color:"negra",z0:0.05}],
+ fotos:[{x:2.2,y:1.8,nx:1,ny:0,persona:"",buscada:false},{x:3.2,y:2.0,nx:-1,ny:0,persona:"Thiago Frias",buscada:true},
+  {x:2.2,y:2.5,nx:1,ny:0,persona:"",buscada:false},{x:3.2,y:2.8,nx:-1,ny:0,persona:"",buscada:false}]}}
+try{const g=localStorage.getItem("editor-mapas");if(g){mapa={...nuevo(),...JSON.parse(g)}}else mapa=ejemplo()}catch(e){mapa=ejemplo()}
+cambio(false);requestAnimationFrame(()=>{tam();encuadrar()});
+}
+</script>
+</body>
+</html>

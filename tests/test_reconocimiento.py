@@ -13,7 +13,9 @@ from reconocimiento.degradar import simular_camara
 
 
 def una_foto():
-    carpeta = sorted(d for d in ROSTROS.iterdir() if d.is_dir())[0]
+    # Thiago Frias 01: retrato de frente (no todas las carpetas empiezan con una foto de frente: la de
+    # Alejandro Chipayo, la primera en orden alfabetico, empieza de perfil)
+    carpeta = ROSTROS / "Thiago_Frias"
     return nombre_bonito(carpeta.name), carpeta.name, sorted(carpeta.glob("*.jpg"))[0]
 
 

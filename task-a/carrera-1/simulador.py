@@ -41,6 +41,8 @@ class Pared:
     b: tuple
     alto: float = 0.5
     color: tuple = (200, 200, 205)          # BGR
+    textura: object = None                  # BGR (alto x largo) a `ppm` px/m: carton con letras, cinta... (None = liso)
+    ppm: float = 250.0
 
 
 @dataclass
@@ -115,6 +117,9 @@ class Geometria:
         self.B = np.array([p.b for p in ps], float).reshape(-1, 2)
         self.alto = np.array([p.alto for p in ps], float)
         self.color = np.array([p.color for p in ps], float).reshape(-1, 3)
+        self.tex = [p.textura for p in ps]
+        self.ppm = np.array([p.ppm for p in ps], float)
+        self.L = np.hypot(self.B[:, 0] - self.A[:, 0], self.B[:, 1] - self.A[:, 1]) if len(ps) else np.zeros(0)
         cs = mundo.cilindros
         self.C = np.array([c.c for c in cs], float).reshape(-1, 2)
         self.Cr = np.array([c.r for c in cs], float)
@@ -264,6 +269,21 @@ class Camara:
             ang = (self.geo.m.inicio[2] + 0.7)                                  # luz fija del mundo
             sombra = 0.75 + 0.25 * abs(math.cos(math.atan2(n[1], n[0]) - ang))
             col = g.color[i] * sombra
+            if g.tex[i] is not None:                                            # carton con letras, cinta, etiquetas
+                tex = g.tex[i]
+                th, tw = tex.shape[:2]
+                z = CAM_Z + (cy - self.v) * dep[None, :] / f
+                tv = np.clip(((z1 - z) * g.ppm[i]).astype(int), 0, th - 1)
+                tu = (s[cols] * g.L[i] * g.ppm[i]).astype(int) % tw
+                tu = np.broadcast_to(tu[None, :], tv.shape)
+                niebla = np.exp(-dep / 12.0)
+                k = sombra * (0.85 + 0.15 * niebla)
+                osc = np.where(z < 0.03 * (z1 - z0) + 0.01, 0.6, 1.0)
+                sub = img[:, cidx]
+                val = tex[tv[m], tu[m]].astype(np.float32) * (np.broadcast_to(k[None, :], m.shape)[m] * osc[m])[:, None]
+                sub[m] = val
+                img[:, cidx] = sub
+                return
         else:
             col = g.Ccolor[i] * 0.9
         niebla = np.exp(-dep / 12.0)
@@ -276,9 +296,19 @@ class Camara:
         sub[m] = val[m]
         img[:, cidx] = sub
 
-    def foto(self, x, y, yaw, calidad=85, ruido=3.0, desenfoque=0.6):
+    def foto(self, x, y, yaw, calidad=85, ruido=3.0, desenfoque=0.6, w=0.0, velo=0.0, exposicion=0.03):
+        """w (rad/s): giro del robot durante la exposicion -> desenfoque horizontal de |w| * exposicion * f px
+        (el 19/11 las fotos tomadas girando salian corridas). velo: lente sucia (0-1, se mezcla con gris claro y
+        baja el contraste)."""
         img = self.render(x, y, yaw)
         img = cv2.GaussianBlur(img, (0, 0), desenfoque)
+        largo = int(round(abs(w) * exposicion * self.f))
+        if largo >= 2:
+            k = np.full((1, largo), 1.0 / largo, np.float32)
+            img = cv2.filter2D(img, -1, k)
+        if velo > 0:
+            img = img * (1.0 - velo) + velo * 200.0
+            img = cv2.GaussianBlur(img, (0, 0), 0.4 + 2.0 * velo) * 0.5 + img * 0.5
         img += self.rng.normal(0, ruido, img.shape).astype(np.float32)
         img = np.clip(img, 0, 255).astype(np.uint8)
         ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, calidad])
@@ -291,10 +321,12 @@ class SimRobot:
     """Mismo API que TB4Client, con tiempo simulado (advance)."""
 
     def __init__(self, mundo, hfov=42.0, odom_ruido=0.01, odom_sesgo=0.0, semilla=1, camara_ok=True,
-                 acel=1.0, acel_w=4.0, foto_hd=None, freno=True, cam_nn=False):
+                 acel=1.0, acel_w=4.0, foto_hd=None, freno=True, cam_nn=False, velo=0.0, exposicion=0.0,
+                 vmax_puente=0.31):
         """foto_hd = (ancho, alto, hfov) de la camara grande (photo(hd=True)); freno=False si delante va el
         puente real (robot_ros_sim.py), que ya aplica el freno."""
         self.freno = freno
+        self.velo, self.exposicion = velo, exposicion      # lente sucia y desenfoque al girar (ver Camara.foto)
         self.mundo = mundo
         self.geo = Geometria(mundo)
         self.cam = Camara(self.geo, hfov=hfov, semilla=mundo.semilla)
@@ -314,7 +346,7 @@ class SimRobot:
         self.time = 0.0
         self.cmd, self.cmd_t = (0.0, 0.0), -1e9
         self.angles = np.linspace(-math.pi, math.pi, 720, endpoint=False)
-        self.safety = P.SafetyFilter(P.SafetyConfig())
+        self.safety = P.SafetyFilter(P.SafetyConfig(max_linear=vmax_puente))   # 0.46: safety_override + --max-linear
         self.flags = 0
         self.path = [(self.wx, self.wy)]
         self.collisions = 0
@@ -372,7 +404,7 @@ class SimRobot:
             raise RuntimeError("sin imagen de la camara (simulada caida)")
         self.fotos += 1
         cam = self.cam_hd if (hd and self.cam_hd is not None) else self.cam
-        img = cam.foto(self.wx, self.wy, self.wth, quality)
+        img = cam.foto(self.wx, self.wy, self.wth, quality, w=self.w, velo=self.velo, exposicion=self.exposicion)
         if self.cam_nn is not None:
             self._ultima_foto = img
         return img

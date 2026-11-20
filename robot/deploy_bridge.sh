@@ -10,11 +10,11 @@
 #
 # En el robot queda: ~/tb4_udp/tb4_bridge.py + ~/tb4_udp/tb4/ (protocolo compartido).
 #
-# Variables: TB4_IP (por defecto 192.168.0.103). Si exportas SSHPASS y tienes sshpass,
+# Variables: TB4_IP (por defecto 192.168.0.104). Si exportas SSHPASS y tienes sshpass,
 # no te pedira la contrasena; si no, ssh la pedira (o usa ssh-copy-id una vez).
 set -euo pipefail
 
-IP="${TB4_IP:-192.168.0.103}"
+IP="${TB4_IP:-192.168.0.104}"
 TARGET="ubuntu@$IP"
 DIR="tb4_udp"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,7 +30,9 @@ if [ -n "${SSHPASS:-}" ] && command -v sshpass >/dev/null; then
   SSH=(sshpass -e "${SSH[@]}"); SCP=(sshpass -e "${SCP[@]}")
 fi
 
-RUN="source /etc/turtlebot4/setup.bash && cd ~/$DIR && exec python3 -u tb4_bridge.py $EXTRA"
+# PYTHONNOUSERSITE=1: el puente usa el numpy/OpenCV del sistema (los de ROS). El numpy 2 / OpenCV de pip que la
+# carrera instala en ~/.local no son compatibles con cv_bridge (compilado con numpy 1).
+RUN="source /etc/turtlebot4/setup.bash && cd ~/$DIR && PYTHONNOUSERSITE=1 exec python3 -u tb4_bridge.py $EXTRA"
 STOP="pkill -f '[t]b4_bridge.py' && echo 'puente detenido' || echo 'el puente no estaba corriendo'"
 
 case "$MODE" in

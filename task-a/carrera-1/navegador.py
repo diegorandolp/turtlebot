@@ -81,6 +81,23 @@ class Config:
     #                                 del suelo: de muy cerca la cara sale cortada arriba y se reconoce mal)
     margen_qr: float = 0.08         # el QR cuenta si su cara se reconoce como la buscada con esta ventaja (coseno)
     qr_max_s: float = 30.0          # s maximos frente a la foto buscando el QR (despues vuelve igual)
+    d_frente_qr: float = 0.55       # m: frente a la foto para leer el QR. El QR va DEBAJO de la foto, a la altura de
+                                    # la camara (13 cm): a 0.55 m mide ~57 px en la preview y se lee sin HD, y la
+                                    # cara todavia entra (a 0.45 m la de un retrato de medio cuerpo queda cortada)
+    qr_preview_s: float = 5.0       # s leyendo de la preview antes de pedir HD (en la Raspberry la HD tarda ~4 s)
+    px_qr_1: float = 35.0           # px: con la cara asi de grande (y clara) basta leer el QR 1 vez
+    # --- decidir mas rapido (en la Raspberry hay ~2 fotos/s: esperar p >= 0.97 con peso 1 costaba ~35 s) ---
+    p_temprana: float = 0.90        # una foto es la buscada con p >= esto en >= 2 vistas con la cara >= px_temprana
+    px_temprana: float = 24.0       # px (a 24 px el reconocimiento acierta ~96 % por foto, 97 % por voto)
+    n_fotos: int = 0                # fotos en la meta si se sabe (0 = no se sabe): vistas todas, se elige por ranking
+    mirar_s: float = 1.1            # s quieto en cada punto de la fila (la Raspberry toma ~2 fotos por s)
+    d_vista_fila: tuple = (0.5, 0.45, 0.55, 0.62)   # m de la pared para mirar cada foto de la fila (preferidas
+                                    # primero). Fotos chicas (cara ~5 cm): a 0.5 m la cara mide ~33 px. Las fotos van
+                                    # bajas (QR en el piso, foto hasta ~25 cm: medido el 19/11) y la camara (13 cm)
+                                    # las ve enteras aun a 0.35 m. Banco: 0.5 m 19/25 y 112 s, 0.62 m 17/25 y 125 s
+    v_fila: float = 0.25            # m/s entre puntos de la fila
+    rank_p: float = 0.5             # ranking: la mas parecida necesita p >= esto...
+    rank_ventaja: float = 4.0       # ...y esta ventaja (veces) sobre la segunda
 
 
 # arcos que prueba la ventana dinamica: 6 velocidades de 0 a vmax y 19 giros, mantenidos 1.2 s
@@ -268,6 +285,8 @@ class Carrera:
         self._qr_votos = {}                   # texto -> fotos que lo vieron junto a una cara reconocida como la buscada
         self._qr_otros = {}                   # texto -> persona junto a la que se vio (otra que la buscada)
         self._qr = None                       # fase de LEER_QR: dict(paso, t0, th0, t_ini)
+        self._t_ahora = 0.0                   # el `now` del ultimo paso() (para quiere_hd)
+        self._fila_completa = False           # se recorrio entera la fila (o el tubo): vale decidir por ranking
         self.qr_vista = None                  # recorte de la foto con el QR aceptado (lo pone carrera.py, para mostrar)
         self._mirar = []                      # rumbos (mapa) a los que girar en el sitio, en orden (barrido)
         self._mapa = None                     # el ultimo mapa recibido (LEER_QR lo usa para ponerse de frente)
@@ -326,6 +345,14 @@ class Carrera:
 
     # ---------- varias fotos: candidatas, la buscada y su QR ----------
     @property
+    def quiere_hd(self):
+        """Pedir fotos HD para el QR: solo frente a la foto y si la preview no alcanzo en qr_preview_s (en la
+        Raspberry cada foto HD tarda ~4 s: pedirla al acercarse, como antes, frenaba todo)."""
+        f = self._qr
+        return bool(self.quiere_qr and self.estado == LEER_QR and f is not None and f["paso"] >= 0
+                    and self._t_ahora - f.get("t_frente", f["t_ini"]) > self.cfg.qr_preview_s)
+
+    @property
     def quiere_qr(self):
         """La camara debe buscar QR (cuesta: solo cerca de la meta)."""
         return bool(self.cfg.buscar and self.cfg.leer_qr and self.palabra is None
@@ -373,12 +400,22 @@ class Carrera:
     def _clasificar(self, c):
         """pendiente | objetivo (es la buscada) | otra. Se recalcula con cada foto: puede cambiar."""
         v = c.vot
-        if v.n < v.min_fotos or v.peso < 1.0:
+        if c.descartada and not (v.lider()[0] == self.cfg.buscar and v.lider()[1] >= v.prob_min):
+            c.estado = "otra"
+            return
+        if c.por_ranking and (v.n < 4 or v.lider()[0] == self.cfg.buscar):
+            return                                              # elegida por ranking: sigue siendolo mientras la
+                                                                # buscada sea la mas parecida
+        temprana = v.n >= v.min_fotos and c.ancho_max >= self.cfg.px_temprana
+        if v.n < v.min_fotos or (v.peso < 1.0 and not temprana):
             c.estado = "pendiente"
             return
         nombre, p = v.lider()
         if nombre == self.cfg.buscar and p >= v.prob_min:
             c.estado = "objetivo"
+        elif (nombre == self.cfg.buscar and p >= self.cfg.p_temprana and c.ancho_max >= self.cfg.px_temprana
+              and not any(k.estado == "objetivo" for k in self.candidatas if k is not c)):
+            c.estado = "objetivo"                               # clara y sin rival: no esperar mas fotos
         elif c.ancho_max >= self.cfg.px_descartar and (
                 (nombre != self.cfg.buscar and p >= v.prob_min) or (v.n >= 4 and self._p_buscada(c) < 0.01)):
             c.estado = "otra"                                   # solo de cerca: de lejos podria ser la buscada
@@ -419,11 +456,17 @@ class Carrera:
         if self.estado in (PAUSA, VOLVER, HECHO):
             return
         actual = self.obj if self.obj in self.candidatas else None
+        if self.estado == LEER_QR and actual is not None and actual.estado != "otra":
+            return                                                 # leyendo el QR: no cambiar de foto ni de plan
         # una candidata que no se encontro donde se la vio se deja de lado un rato (salvo que se la vuelva a
         # ver): si no, ACERCAR la elige, no la ve y vuelve a IDA en cada foto (bucle)
         def vale(c):
             return now > c.t_ignorar or c.visto_hace(now) < 1.0
         objs = [c for c in self.candidatas if c.estado == "objetivo" and vale(c)]
+        if not objs:
+            r = self._ranking(now)
+            if r is not None:
+                objs = [r]
         pend = [c for c in self.candidatas if c.estado == "pendiente" and c.n >= 2 and vale(c)]
         if objs:
             mejor = max(objs, key=self._p_buscada)
@@ -474,6 +517,37 @@ class Carrera:
                 self.mirada.activa = None
             self.vista_b = np.array(self._pos[:2], float)
             self._mejor_b, self.por_mapa, self.px_extra = None, False, 1.0
+            n = self._normal_pared(mejor.xy)                       # vista de refilon (pared de un costado del tubo):
+            hacia = self.vista_b - np.asarray(mejor.xy, float)     # ir derecho a la foto choca con la pared; ir por
+            dh = float(np.linalg.norm(hacia))                      # el mapa al punto de enfrente
+            if dh > 1e-6 and float(n @ hacia) / dh < math.cos(math.radians(45)):
+                self.por_mapa = True
+                self._reset_ruta()
+
+    def _ranking(self, now):
+        """Si ya se vieron todas las fotos (las `n_fotos` si se sabe cuantas son, o se recorrio la fila / el
+        tubo entero), la buscada es la que MAS se le parece si le saca ventaja a la segunda: no hace falta
+        estar seguro de cada una (el 19/11 Thiago tenia 0.96 a los 15 s y se confirmo recien a los 52 s)."""
+        if self.estado in (PAUSA, VOLVER, HECHO, LEER_QR):
+            return None
+        vistas = [c for c in self.candidatas if c.xy is not None and c.n >= 2 and c.vot.n >= 1
+                  and (now > c.t_ignorar or c.visto_hace(now) < 1.0)]
+        if not vistas:
+            return None
+        completo = (self.cfg.n_fotos > 0 and len(vistas) >= self.cfg.n_fotos) or self._fila_completa
+        if not completo:
+            return None
+        orden = sorted(vistas, key=self._p_buscada, reverse=True)
+        p1 = self._p_buscada(orden[0])
+        p2 = self._p_buscada(orden[1]) if len(orden) > 1 else 0.0
+        if p1 < self.cfg.rank_p or p1 < self.cfg.rank_ventaja * p2 or orden[0].estado == "otra":
+            return None
+        c = orden[0]
+        if not (c.estado == "objetivo" and c.por_ranking):
+            self.nota(now, f"vi {len(vistas)} fotos: la mas parecida a {self.cfg.buscar} es la #{c.id} "
+                           f"(p={p1:.2f}, la segunda {p2:.2f})")
+        c.estado, c.por_ranking = "objetivo", True
+        return c
 
     def _quizas_barrer(self, now, x, y, th, cam_ok):
         """Pasadas las senales y sin ninguna foto vista, cada ~0.9 m mira hacia las paredes cercanas: en un
@@ -519,70 +593,159 @@ class Carrera:
                 return q
         return None                                                 # ahi no cabe el robot (caja, rincon)
 
+    def _rango_scan(self, q, ventana_deg=1.5):
+        """(distancia a q, lo que mide el LiDAR en esa direccion) desde donde se tomo el ultimo scan: inf si en
+        esa direccion no devolvio nada, None si no hay scan."""
+        bx, by, bth = self.pos_scan
+        dx, dy = q[0] - bx, q[1] - by
+        rq = math.hypot(dx, dy)
+        sx, sy = self._pts_scan
+        if not sx.size:
+            return rq, None                                      # sin scan: no se sabe
+        bq = wrap(math.atan2(dy, dx) - bth)
+        m = np.abs(wrap_arr(np.arctan2(sy, sx) - bq)) < math.radians(ventana_deg)
+        return rq, (float(np.hypot(sx[m], sy[m]).min()) if m.any() else math.inf)
+
+    def _pared_enfrente(self, centro, n, d_min=0.5, d_max=1.8):
+        """Distancia (m) de la pared paralela de enfrente: puntos del LiDAR a d_min-d_max de `centro` sobre la
+        normal n (y a < 0.4 m de esa recta). None si no hay (no es un pasillo/tubo)."""
+        sx, sy = self._pts_scan
+        if sx.size < 5:
+            return None
+        bx, by, bth = self.pos_scan
+        gx = bx + math.cos(bth) * sx - math.sin(bth) * sy
+        gy = by + math.sin(bth) * sx + math.cos(bth) * sy
+        rel = np.stack([gx - centro[0], gy - centro[1]], 1)
+        a = rel @ n
+        lat = rel @ np.array([-n[1], n[0]])
+        m = (a > d_min) & (a < d_max) & (np.abs(lat) < 0.4)
+        if m.sum() < 5:
+            return None
+        return float(np.median(a[m]))
+
     def _empezar_fila(self, now):
-        """Apenas se ve una foto se asume que se esta en la zona de la meta: las demas fotos estan al lado, en
-        fila sobre la misma pared. Puntos de vista DE FRENTE a la pared (a ~0.75 m): uno frente a cada foto ya
-        vista y, hacia cada lado, uno cada 0.45 m (lo que separa dos fotos) hasta 2.7 m mas alla de la ultima
-        (6 fotos en fila) o hasta donde se acaba la pared. Asi se miran una por una, de frente: de costado la
-        cara se reconoce mal y el QR no se lee. False si no hay fotos o ya se visitaron todos los puntos."""
+        """Apenas se ve una foto se asume que se esta en la zona de la meta: las demas fotos estan cerca, en fila
+        sobre la misma pared, y si es un pasillo sin salida ("el tubo", 19/11: las fotos van en los DOS costados,
+        nunca al fondo) tambien en la pared de enfrente. Puntos de vista DE FRENTE a cada pared (a ~0.55-0.75 m):
+        uno frente a cada foto ya vista y, hacia cada lado, uno cada 0.45 m (lo que separa dos fotos) hasta 2.7 m
+        mas alla de la ultima o hasta donde no cabe el robot. En el tubo se recorre por estaciones: en cada una se
+        mira una pared y despues la otra (solo hay que girar). De costado la cara se reconoce mal y el QR no se
+        lee. False si no hay fotos o ya se visitaron todos los puntos."""
         fotos = [c for c in self.candidatas if c.xy is not None and c.n >= 2]
         if not fotos:
             return False
-        P = np.array([c.xy for c in fotos], float)
-        centro = P.mean(0)
-        n = self._normal_pared(centro)                             # de la pared hacia el robot
-        u = np.array([-n[1], n[0]])                                # a lo largo de la pared
-        t = (P - centro) @ u
-        rumbo = math.atan2(-n[1], -n[0])
+        x, y = self._pos[:2]
+        normales = [self._normal_pared(c.xy) for c in fotos]
+        ref = int(np.argmin([math.hypot(c.xy[0] - x, c.xy[1] - y) for c in fotos]))
+        n_ref = normales[ref]
+        filas = []                                                 # (centro, n, [t de fotos conocidas], codigo)
+        for signo, cod in ((1, 1), (-1, 2)):
+            idx = [i for i, n in enumerate(normales) if signo * float(n @ n_ref) > 0.7]
+            if not idx:
+                continue
+            P = np.array([fotos[i].xy for i in idx], float)
+            nn = np.mean([normales[i] for i in idx], axis=0)
+            nn /= max(float(np.linalg.norm(nn)), 1e-6)
+            filas.append([P.mean(0), nn, P, cod])
+        replanear = False
+        if len(filas) == 1:                                        # tubo: fotos solo vistas en una pared
+            c0, n0, P0, _ = filas[0]
+            a_robot = float((np.array([x, y]) - c0) @ n0)
+            D = self._pared_enfrente(c0, n0)
+            if D is not None and 0.2 < a_robot < D - 0.2:          # el robot esta entre las dos paredes:
+                filas.append([c0 + D * n0, -n0, np.zeros((0, 2)), 2])   # la de enfrente tambien puede tener fotos
+            elif D is not None or a_robot <= 0.2 or a_robot > 1.8:
+                replanear = True                                   # desde afuera la pared de enfrente se mide mal:
+                                                                   # replanear desde el primer punto
+        u0 = np.array([-n_ref[1], n_ref[0]])                       # eje comun (a lo largo de las paredes)
+        t_r = float(np.array([x, y]) @ u0)
+        todos = []                                                 # (t sobre u0, punto)
+        for centro, n, P, cod in filas:
+            u = np.array([-n[1], n[0]])
+            if float(u @ u0) < 0:
+                u = -u                                             # misma orientacion en las dos paredes
+            rumbo = math.atan2(-n[1], -n[0])
+            t = (P - centro) @ u if len(P) else np.zeros(0)
 
-        def punto(ti, lado):
-            pared = centro + ti * u
-            if any(math.hypot(pared[0] - a, pared[1] - b) < 0.25 for a, b in self._fila_vistos):
-                return "visto"                                     # ese tramo de pared ya se miro de frente
-            q = self._vista_frente(pared, n)
-            if q is None:
-                return None                                        # ahi no se puede estar (se acabo la pared)
-            return (float(q[0]), float(q[1]), rumbo, float(pared[0]), float(pared[1]), lado)
-
-        # orden: primero se sigue la fila hacia el lado donde esta el robot (desde la ultima foto conocida hacia
-        # afuera), luego las fotos ya vistas y por ultimo el otro lado. Los puntos de los lados son "a ver si
-        # hay mas": el primero sin foto (o inalcanzable) corta ese lado (_recorrer_fila)
-        t_r = float((np.array(self._pos[:2]) - centro) @ u)
-        cerca = -1 if t_r < 0.5 * (t.min() + t.max()) else 1
-        conocidas = []
-        for ti in sorted(t, reverse=(cerca == 1)):
-            if all(abs(ti - k) > 0.2 for k in conocidas):
-                conocidas.append(float(ti))
-
-        def lado_de(signo):
-            borde = t.max() if signo == 1 else t.min()
-            out = []
-            for k in range(1, 7):
-                ti = float(borde + signo * 0.45 * k)
-                w = centro + ti * u
-                if any(math.hypot(w[0] - a, w[1] - b) < 0.3 for a, b in self._fila_vacios):
-                    break                                          # ya se sabe que por ahi la fila no sigue
-                q = punto(ti, signo)
+            def punto(ti, lado, centro=centro, n=n, u=u, rumbo=rumbo):
+                pared = centro + ti * u
+                if any(math.hypot(pared[0] - a, pared[1] - b) < 0.25 for a, b in self._fila_vistos):
+                    return "visto"                                 # ese tramo de pared ya se miro de frente
+                rp, rs = self._rango_scan(pared)
+                bx, by, _ = self.pos_scan
+                de_frente = abs((bx - pared[0]) * n[0] + (by - pared[1]) * n[1]) > 0.5 * rp   # < 60 grados
+                if rs is not None and rp < 4.0 and rs > rp + 0.35 and de_frente:
+                    return None                                    # el LiDAR ve mas alla: ahi no hay pared (abertura)
+                q = self._vista_frente(pared, n, dists=self.cfg.d_vista_fila)
                 if q is None:
-                    break                                          # se acabo la pared: la fila no sigue por ahi
-                if q != "visto":
-                    out.append(q)
-            return out
+                    return None                                    # ahi no se puede estar (se acabo la pared)
+                rq, rs = self._rango_scan(q)
+                if rs is not None and rq < 4.0 and rs < rq - 0.15:
+                    return None                                    # detras de una pared (pasado el fondo del tubo)
+                return (float(q[0]), float(q[1]), rumbo, float(pared[0]), float(pared[1]), lado)
 
-        puntos = lado_de(cerca) + [q for q in (punto(ti, 0) for ti in conocidas) if q not in (None, "visto")]
-        puntos += lado_de(-cerca)
-        if not puntos:
+            lo = float(t.min()) if len(t) else 0.0
+            hi = float(t.max()) if len(t) else 0.0
+            for ti in sorted(set(round(float(v), 2) for v in t)):
+                q = punto(ti, 0)
+                if q not in (None, "visto"):
+                    todos.append((float((centro + ti * u) @ u0), q))
+            for signo in (1, -1):
+                borde = hi if signo == 1 else lo
+                for k in range(1, 7):
+                    ti = borde + signo * 0.45 * k
+                    w = centro + ti * u
+                    if any(math.hypot(w[0] - a, w[1] - b) < 0.3 for a, b in self._fila_vacios):
+                        break                                      # ya se sabe que por ahi la fila no sigue
+                    q = punto(ti, signo * cod)
+                    if q is None:
+                        break                                      # se acabo la pared: la fila no sigue por ahi
+                    if q != "visto":
+                        todos.append((float(w @ u0), q))
+            if not len(t):                                         # pared de enfrente sin fotos vistas: un punto
+                q = punto(0.0, 0)                                  # frente al centro tambien
+                if q not in (None, "visto"):
+                    todos.append((float(centro @ u0), q))
+        if not todos:
             return False
-        self._fila = dict(puntos=puntos, t_punto=now, mirando_desde=None)
+        # orden: estaciones a lo largo del eje empezando por el extremo del lado del robot; en cada estacion
+        # (puntos a < 0.25 m sobre el eje) primero la pared mas cercana al robot
+        ts = [t for t, _ in todos]
+        cerca = -1 if abs(t_r - min(ts)) < abs(t_r - max(ts)) else 1
+        # una sola pasada por estaciones desde el extremo del robot (ir y volver por el tubo cuesta mas que mirar
+        # un punto de mas): las fotos ya vistas y los puntos "a ver si hay mas" en el orden en que se pasa por ellos
+        todos.sort(key=lambda tq: (round(-cerca * tq[0] / 0.25), math.hypot(tq[1][0] - x, tq[1][1] - y)))
+        # zigzag: en cada estacion empezar por la pared que se estaba mirando al final de la anterior (ahorra
+        # medio giro por estacion: ~1.7 s)
+        orden, i = [], 0
+        while i < len(todos):
+            j = i + 1
+            while j < len(todos) and abs(todos[j][0] - todos[i][0]) < 0.25:
+                j += 1
+            grupo = todos[i:j]
+            if orden and len(grupo) > 1:
+                previo = orden[-1][1][2]
+                grupo.sort(key=lambda tq: abs(wrap(tq[1][2] - previo)))
+            orden += grupo
+            i = j
+        todos = orden
+        puntos = [q for _, q in todos]
+        if self.cfg.n_fotos and len(fotos) >= self.cfg.n_fotos:
+            puntos = [q for q in puntos if q[5] == 0]              # ya se vieron todas: no buscar mas
+        self._fila = dict(puntos=puntos, t_punto=now, mirando_desde=None, completa=True, vacios={}, replanear=replanear,
+                          tubo=len(filas) > 1)
         self.estado = FILA
         self._mirar = []
         self._reset_ruta()
-        self.nota(now, f"ninguna foto vista es {self.cfg.buscar}: recorro la fila ({len(puntos)} puntos de vista)")
+        donde = "en las dos paredes" if len(filas) > 1 else "en la pared"
+        self.nota(now, f"ninguna foto vista es {self.cfg.buscar}: recorro la fila {donde} ({len(puntos)} puntos de vista)")
         return True
 
     def _recorrer_fila(self, now, pos, mapa):
         f = self._fila
         if not f or not f["puntos"]:
+            if f and f.get("completa") and not f.get("incompleta"):
+                self._fila_completa = True                         # se miraron (de verdad) todas las paredes
             self._fila = None
             self.estado = IDA
             self.t_nuevo = now
@@ -601,28 +764,45 @@ class Carrera:
             self._reset_ruta()
             return 0.0, 0.0
         d = math.hypot(px - x, py - y)
-        if d < 0.15 or now - f["t_punto"] > (6.0 if lado else 10.0):   # llego (o no llega: pasar al siguiente)
+        if d < 0.22 or now - f["t_punto"] > (6.0 if lado else 10.0):   # llego (o no llega: pasar al siguiente)
             self._prog = None                                       # girar y mirar no es estar atascado
             err = wrap(rumbo - th)
             if f["mirando_desde"] is None:
-                if abs(err) > 0.1 and now - f["t_punto"] < 14.0:
-                    return 0.0, float(np.clip(2.0 * err, -1.0, 1.0))
+                if "llego" not in f:
+                    f["llego"] = d < 0.5                            # (por tiempo y lejos: ese tramo no se vio bien)
+                if abs(err) > 0.12 and now - f["t_punto"] < 14.0:
+                    return 0.0, float(np.clip(2.2 * err, -1.8, 1.8))
                 f["mirando_desde"] = now
-            if now - f["mirando_desde"] < 0.7:                     # quieto mirando la pared: 3-4 fotos
+            if now - f["mirando_desde"] < self.cfg.mirar_s:        # quieto mirando la pared (2 fotos en la Pi)
                 return 0.0, 0.0
-            self._fila_vistos.append((px, py) if wx is None else (wx, wy))
+            if f.pop("llego", True):
+                self._fila_vistos.append((px, py) if wx is None else (wx, wy))
+            else:
+                f["incompleta"] = True                             # no se llego: no cuenta como mirado (otra fila lo
+                                                                   # reintenta) y no vale decidir por ranking
             f["puntos"].pop(0)
+            if f.get("replanear"):
+                f["replanear"] = False
+                if self._empezar_fila(now):                        # ya adentro: ahora se ve la pared de enfrente
+                    return 0.0, 0.0
+                self._fila = f
             if lado and not any(c.xy is not None and math.hypot(c.xy[0] - wx, c.xy[1] - wy) < 0.3
                                 for c in self.candidatas):
-                # se miro (o no se pudo llegar) y mas alla de las fotos conocidas no aparecio ninguna: la fila
-                # termina por ese lado (los puntos de los lados son especulativos: no vale insistir)
-                f["puntos"] = [q for q in f["puntos"] if q[5] != lado]
-                self._fila_vacios.append((wx, wy))
+                # se miro (o no se pudo llegar) y mas alla de las fotos conocidas no aparecio ninguna: con DOS
+                # puntos vacios seguidos la fila termina por ese lado (los puntos de los lados son especulativos;
+                # con uno solo se perdia una foto despues de un hueco)
+                vac = f.setdefault("vacios", {})
+                vac[lado] = vac.get(lado, 0) + 1
+                if vac[lado] >= (3 if f.get("tubo") else 2):       # en el tubo puede haber huecos de 2 fotos
+                    f["puntos"] = [q for q in f["puntos"] if q[5] != lado]
+                    self._fila_vacios.append((wx, wy))
+            elif lado:
+                f.setdefault("vacios", {})[lado] = 0
             f.update(t_punto=now, mirando_desde=None)
             self._reset_ruta()
             return 0.0, 0.0
         if mapa is not None:
-            return self._por_ruta(now, pos, mapa, (px, py), 0.18, ("mapa fino", "mapa"), "la fila")
+            return self._por_ruta(now, pos, mapa, (px, py), self.cfg.v_fila, ("mapa fino", "mapa"), "la fila")
         return self._mover(now, pos, wrap(math.atan2(py - y, px - x) - th), 0.15)
 
     def ver_qr(self, now, o):
@@ -637,6 +817,18 @@ class Carrera:
         if not self.cfg.buscar or self.palabra is not None or self.estado in (PAUSA, VOLVER, HECHO):
             return
         cara = o.cara
+        if cara is None and self.estado == LEER_QR and self.obj is not None and self.obj.xy is not None \
+                and self.obj.estado == "objetivo" and self.vot.lider()[0] == self.cfg.buscar \
+                and self._qr_es_de_la_buscada(o):
+            # de cerca la camara (a 13 cm del suelo) ve el QR pero ya no la cara de arriba: frente a la foto ya
+            # reconocida, un QR justo debajo de ella es el suyo. Necesita 2 lecturas
+            if o.texto not in self._qr_votos:
+                self.nota(now, f"QR debajo de la foto #{self.obj.id} ({self.cfg.buscar}): '{o.texto}'")
+            self._qr_votos[o.texto] = self._qr_votos.get(o.texto, 0) + 1
+            orden = sorted(((t, n) for t, n in self._qr_votos.items() if t not in self._qr_otros), key=lambda kv: -kv[1])
+            if orden and orden[0][1] >= 2 and orden[0][1] - (orden[1][1] if len(orden) > 1 else 0) >= 2:
+                self._aceptar_qr(now, orden[0][0], f"leido {orden[0][1]} veces debajo de la foto")
+            return
         if cara is None or cara.res is None or cara.px < self.cfg.px_descartar:
             return
         c = self._candidata(cara.xy)
@@ -659,11 +851,26 @@ class Carrera:
             return
         texto, n = orden[0]
         n2 = orden[1][1] if len(orden) > 1 else 0
-        if n >= 2 and n - n2 >= 2:
+        clara = r.nombre == self.cfg.buscar and cara.px >= self.cfg.px_qr_1 and r.margen >= 2 * self.cfg.margen_qr
+        if (n >= 2 and n - n2 >= 2) or (n == 1 and n2 == 0 and clara):
             for k in self.candidatas:                               # la foto activa: la buscada (para dibujar)
                 if k.estado == "objetivo" and self.obj is not k and self.estado != LEER_QR:
                     self.obj, self.vot = k, k.vot
-            self._aceptar_qr(now, texto, f"leido {n} veces")
+            self._aceptar_qr(now, texto, f"leido {n} veces" if n >= 2 else f"leido 1 vez, cara de {cara.px:.0f} px")
+
+    def _qr_es_de_la_buscada(self, o):
+        """Un QR visto sin cara al lado es de la buscada solo si no hay duda con una foto vecina (las fotos van a
+        0.40-0.55 m): de frente (a menos de 10 grados del centro de la imagen: en LEER_QR el robot mira a la
+        buscada), a menos de 0.25 m de ella en el mapa y al menos 0.15 m mas cerca de ella que de cualquier otra
+        candidata."""
+        if abs(o.rumbo) > math.radians(10):
+            return False
+        d_obj = math.hypot(o.xy[0] - self.obj.xy[0], o.xy[1] - self.obj.xy[1])
+        if d_obj > 0.25:
+            return False
+        otras = [math.hypot(o.xy[0] - c.xy[0], o.xy[1] - c.xy[1]) for c in self.candidatas
+                 if c is not self.obj and c.xy is not None]
+        return not otras or min(otras) > d_obj + 0.15
 
     def _aceptar_qr(self, now, texto, como):
         self.palabra = texto
@@ -706,6 +913,9 @@ class Carrera:
         (anunciara el nombre)."""
         f = self._qr
         if now - f["t_ini"] > self.cfg.qr_max_s:
+            orden = sorted(((t, n) for t, n in self._qr_votos.items() if t not in self._qr_otros), key=lambda kv: -kv[1])
+            if len(orden) == 1 or (len(orden) > 1 and orden[0][1] > orden[1][1]):
+                return self._aceptar_qr(now, orden[0][0], f"el mas leido ({orden[0][1]}) al rendirme") and (0.0, 0.0)
             self.nota(now, f"no pude leer el QR en {self.cfg.qr_max_s:.0f} s: vuelvo y anuncio el nombre")
             self.estado = VOLVER
             self._reset_ruta()
@@ -717,13 +927,13 @@ class Carrera:
             if now - f.get("t_n", -1e9) > 1.0:
                 f["t_n"] = now
                 n = self._normal_pared(self.obj.xy)
-                f["frente"] = tuple(np.asarray(self.obj.xy) + 0.6 * n)
+                f["frente"] = tuple(np.asarray(self.obj.xy) + self.cfg.d_frente_qr * n)
             fx, fy = f["frente"]
             d = math.hypot(fx - x, fy - y)
             if d < 0.12 or now - f["t0"] > 12.0:
                 mirar = math.atan2(self.obj.xy[1] - y, self.obj.xy[0] - x)
                 if abs(wrap(mirar - th)) < 0.1 or now - f["t0"] > 15.0:
-                    f.update(paso=0, t0=now, th0=mirar)
+                    f.update(paso=0, t0=now, th0=mirar, t_frente=now)
                 return 0.0, float(np.clip(1.8 * wrap(mirar - th), -0.8, 0.8))
             if self._mapa is not None:
                 return self._por_ruta(now, pos, self._mapa, (fx, fy), 0.15, ("mapa fino", "mapa"), "ponerme de frente")
@@ -744,7 +954,7 @@ class Carrera:
             if dt > 1.5:
                 sig()
             return 0.0, girar(f["th0"])
-        if paso in (1, 2):                                         # mirar a cada lado: el QR esta en una esquina
+        if paso in (1, 2):                                         # mirar a cada lado (por si el QR no esta debajo)
             obj = wrap(f["th0"] + math.radians(12) * (1 if paso == 1 else -1))
             if abs(wrap(obj - th)) < 0.05 and dt > 0.8 or dt > 3.0:
                 sig()
@@ -785,6 +995,7 @@ class Carrera:
     def paso(self, now, pos, scan, mapa=None, fotos=0, cam_ok=True, pos_scan=None):
         """-> (v, w). pos = (x, y, yaw) ACTUAL en el marco del mapa (origen = A); pos_scan = pose cuando
         se tomo `scan` (el LiDAR va a ~7 Hz y el robot se mueve entre scans)."""
+        self._t_ahora = now
         if scan is not self._scan_ref:
             self._scan_ref = scan
             self.libres_scan = carriles(scan, self.cfg.medio_ancho)
@@ -1042,10 +1253,14 @@ class Carrera:
             # perderse dando vueltas junto a la pared
             self.nota(now, "no logro acercarme mas: decido con lo que vi")
             return self._decidir(now, "tiempo")
+        en_camino = False
+        if self.por_mapa:                                       # yendo por el mapa al punto de enfrente: no se la ve
+            fx, fy = self._frente_b()                           # mientras se viaja (mira hacia adelante)
+            en_camino = math.hypot(fx - pos[0], fy - pos[1]) > 0.35 and now - self.t_acercar < 25.0
         if sin_ver > 2.0:
             # perdida de vista: ir (por el mapa si hace falta) a donde estaba y, ya cerca, girar buscandola
             # 30 s si se la vio desde que se eligio; 12 s si se eligio por el recuerdo y no aparece
-            if sin_ver > (30.0 if self.obj.visto_hace(now) < now - self.t_acercar else 12.0):
+            if not en_camino and sin_ver > (30.0 if self.obj.visto_hace(now) < now - self.t_acercar else 12.0):
                 self.nota(now, "no encuentro la cara donde la vi: vuelvo a explorar")
                 self.obj.t_ignorar = now + 25.0                 # con --buscar: no volver a elegirla enseguida
                 self.estado = IDA
@@ -1067,7 +1282,7 @@ class Carrera:
             return self._decidir(now, "temprano")
         cerca = d <= self.cfg.d_parada + 0.05 and self.px_extra == 1.0
         grande = o.px >= self.cfg.px_objetivo * self.px_extra and o.t > now - 1.0 and d <= self.cfg.d_max_b
-        if grande or cerca or o.borde_sup:
+        if grande or cerca or (o.borde_sup and d <= self.cfg.d_max_b):   # (cortada arriba de lejos: no es "cerca")
             self.nota(now, f"frente a la foto: {d:.2f} m, cara de {o.px:.0f} px: RECONOCER")
             self.estado = RECONOCER
             self.t_reconocer = now
@@ -1089,7 +1304,13 @@ class Carrera:
         return self._mover(now, pos, phi, vmax)
 
     def _frente_b(self):
-        """Punto a 0.7 m frente a la foto de B, del lado desde donde se la vio."""
+        """Punto frente a la foto de B. Con --buscar: sobre la normal de su pared, a la distancia de mirar la fila
+        que deje pasar al robot (en un tubo de 0.9 m, 0.7 m quedaba pegado a la pared de enfrente y el
+        acercamiento no avanzaba nunca). Si no, a 0.7 m del lado desde donde se la vio."""
+        if self.cfg.buscar:
+            q = self._vista_frente(self.obj.xy, self._normal_pared(self.obj.xy), dists=self.cfg.d_vista_fila)
+            if q is not None:
+                return tuple(q)
         u = self.vista_b - self.obj.xy
         u = u / max(np.linalg.norm(u), 1e-6)
         return tuple(self.obj.xy + 0.7 * u)
@@ -1105,6 +1326,9 @@ class Carrera:
         o = self.obj.ultima
         if self._seguro():
             return self._decidir(now, "votacion")
+        if (self.cfg.buscar and self.obj.estado == "objetivo" and self.vot.n >= 2
+                and self.vot.lider()[0] == self.cfg.buscar):
+            return self._decidir(now, "ranking" if self.obj.por_ranking else "votacion temprana")
         sin_ver = self.obj.visto_hace(now)
         if self.vot.n > 0 and (now - self.t_reconocer > self.cfg.reconocer_max_s or sin_ver > 2.5):
             t_carrera = now - (self.t_inicio if self.t_inicio is not None else now)
@@ -1121,10 +1345,18 @@ class Carrera:
         if self.cfg.buscar and self.vot.n == 0 and now - self.t_reconocer > 1.5:
             # con --buscar solo votan las fotos tomadas de frente: si no hay votos es que se la ve de costado
             # (pasillo angosto). Ir a un punto frente a la foto, mirarla y volver a acercarse desde ahi
+            self.obj.intentos_frente += 1
+            if self.obj.intentos_frente > 2:                     # ya se intento ponerse de frente: no insistir
+                self.nota(now, f"no logro ver de frente la foto #{self.obj.id}: la dejo por ahora")
+                self.obj.t_ignorar = now + 30.0
+                self.estado = IDA
+                self.t_nuevo = now
+                self._elegir_candidata(now)
+                return 0.0, 0.0
             n = self._normal_pared(self.obj.xy)
-            q = self._vista_frente(self.obj.xy, n)
+            q = self._vista_frente(self.obj.xy, n, dists=self.cfg.d_vista_fila)
             if q is None:
-                q = np.asarray(self.obj.xy) + 0.45 * n
+                q = np.asarray(self.obj.xy) + 0.5 * n
             self._fila = dict(puntos=[(float(q[0]), float(q[1]), math.atan2(-n[1], -n[0]), None, None, 0)],
                               t_punto=now, mirando_desde=None)
             self.estado = FILA
@@ -1173,6 +1405,7 @@ class Carrera:
             self._reset_ruta()
             return 0.0, 0.0
         c.estado = "otra"
+        c.descartada = True                                         # se la miro de cerca: no volver a ella
         self.nota(now, f"foto #{c.id} es {nombre}, no {self.cfg.buscar} (p={p:.2f}, por {por}): busco otra")
         self._elegir_candidata(now)
         if self.estado == RECONOCER:                               # no hay otra a la que ir todavia
@@ -1209,7 +1442,11 @@ class Carrera:
             self.t_ruta = now
             self.ruta = self._ruta_hacia(mapa, (x, y), destino, modos)
         exacta = modos[self.modo_ruta] == "ida exacta"
-        resta, meta = self._seguir(x, y, adelante=0.35 if exacta else 0.6)
+        # mirar mas adelante en la ruta cuanto mas rapido se va: la esquina se empieza a doblar antes y en
+        # curva, sin frenar en seco (a 0.45 m/s mira ~1 m adelante). La ventana dinamica sigue revisando que
+        # el arco no pase cerca de nada, asi que cortar la esquina nunca la acerca a la pared
+        adelante = 0.35 if exacta else 0.6 + 1.6 * max(0.0, vmax - 0.2)
+        resta, meta = self._seguir(x, y, adelante=adelante)
         if exacta:
             vmax = min(vmax, 0.18)                              # por donde paso, despacio y sin cortar esquinas
         if math.hypot(x - destino[0], y - destino[1]) < 0.6:
