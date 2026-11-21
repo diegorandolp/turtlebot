@@ -43,6 +43,7 @@ UNO = (True, False, False, False)
 DOS = (True, True, False, False)
 TRES = (True, True, True, False)
 TODOS = (True, True, True, True)
+PUNO = (False, False, False, False)
 
 
 class TestClasificar(unittest.TestCase):
@@ -63,20 +64,23 @@ class TestClasificar(unittest.TestCase):
     def test_avanzar(self):
         self.assertEqual(clasificar(mano(90, DOS))[0], LENTO)
         self.assertEqual(clasificar(mano(110, DOS))[0], LENTO)
-        self.assertEqual(clasificar(mano(90, TRES))[0], RAPIDO)
-        self.assertEqual(clasificar(mano(75, TRES))[0], RAPIDO)
+        self.assertEqual(clasificar(mano(90, PUNO))[0], RAPIDO)
+        self.assertEqual(clasificar(mano(0, PUNO))[0], RAPIDO)
+        self.assertEqual(clasificar(mano(90, TRES))[0], NINGUNO)   # 3 dedos ya no es gesto
 
     def test_stop(self):
         self.assertEqual(clasificar(mano(90, TODOS))[0], STOP)
         self.assertEqual(clasificar(mano(110, TODOS))[0], STOP)
 
     def test_avanzar_y_stop_solo_hacia_arriba(self):
-        for dedos in (DOS, TRES, TODOS):
-            self.assertEqual(clasificar(mano(0, dedos))[0], NINGUNO)
-            self.assertEqual(clasificar(mano(-90, dedos))[0], NINGUNO)
+        self.assertEqual(clasificar(mano(0, DOS))[0], NINGUNO)
+        self.assertEqual(clasificar(mano(-90, DOS))[0], NINGUNO)
+
+    def test_stop_en_cualquier_direccion(self):
+        for ang in (0, 45, 180, -90, -135):           # p. ej. tras señalar a un lado, abrir la mano ahí mismo
+            self.assertEqual(clasificar(mano(ang, TODOS))[0], STOP, ang)
 
     def test_otros_no_cuentan(self):
-        self.assertEqual(clasificar(mano(90, (False,) * 4))[0], NINGUNO)               # puño
         self.assertEqual(clasificar(mano(90, (True, False, False, True)))[0], NINGUNO)  # cuernos
         self.assertEqual(clasificar(mano(90, (False, True, False, False)))[0], NINGUNO)  # solo corazón
         self.assertEqual(clasificar(None)[0], NINGUNO)
@@ -161,7 +165,7 @@ class TestControl(unittest.TestCase):
             self.assertEqual(c.estado, PARADO, g)
             self.assertYaw(r, deg)
 
-    def test_v_avanza_lento_y_3_dedos_rapido(self):
+    def test_v_avanza_lento_y_puno_rapido(self):
         c, r = Control(v_lento=0.07, v_rapido=0.15), RobotFalso(yaw=0.3)
         v, _ = r.correr(c, LENTO, 2)
         self.assertEqual(c.estado, AVANZANDO)
@@ -224,6 +228,19 @@ class TestControl(unittest.TestCase):
         r.correr(c, LENTO, 1)
         r.correr(c, STOP, 0.2)
         self.assertEqual(r.correr(c, NINGUNO, 2), (0.0, 0.0))
+
+
+    def test_stop_en_pleno_giro_frena_en_2_cuadros(self):
+        """Gestos reales cuadro a cuadro (estabilizador + control): señala, gira y a mitad del giro hace ✋."""
+        e, c, r = Estabilizador(), Control(), RobotFalso()
+        for _ in range(8):
+            r.correr(c, e.update(ABA), 0.05)
+        self.assertEqual(c.estado, GIRANDO)
+        e.update(STOP)
+        v, w = c.paso(e.update(STOP), r.yaw)         # 2.º cuadro con la mano abierta
+        self.assertEqual((v, w, c.estado), (0.0, 0.0, PARADO))
+        for _ in range(10):                          # y sigue quieto aunque baje la mano
+            self.assertEqual(c.paso(e.update(NINGUNO), r.yaw), (0.0, 0.0))
 
 
 if __name__ == "__main__":
