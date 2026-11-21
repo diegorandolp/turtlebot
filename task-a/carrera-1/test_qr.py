@@ -268,7 +268,8 @@ class PuntaAPunta(unittest.TestCase):
         self.assertTrue(r["exito"], r["log"][-4:])
         self.assertEqual(r["palabra"], m.qr)
         self.assertEqual(r["choques"], 0)
-        self.assertLess(r["tiempo"], 150)            # croquis fiel: la buscada no es la primera
+        self.assertLess(r["tiempo"], 170)            # croquis fiel: la buscada no es la primera (21/11: 157 s con la cara chica
+                                                     # ubicada por tamano y el barrido lento; es el mundo viejo, sin bandera)
 
 
 class NombreEnGaleria(unittest.TestCase):

@@ -112,7 +112,10 @@ class Config:
                                     # de la pared de al lado mide ~33 px; a 1 m del punto, ~17 px: se ve, se vota poco)
     barrido_meta: tuple = (60.0, 120.0, -120.0, -60.0)   # grados respecto al fondo, en orden (la camara ve 42: con
                                     # 4 rumbos cubre de 39 a 141 grados a cada lado; 6 rumbos tardaban 14 s, estos ~10)
-    mirar_meta_s: float = 1.0       # s quieto en cada rumbo del barrido (la Raspberry toma ~2 fotos por s)
+    mirar_meta_s: float = 1.2       # s quieto en cada rumbo del barrido, minimo; sigue quieto hasta recibir 3 fotos
+    mirar_meta_max: float = 2.5     # (2 tomadas ya parado: la Pi entrega cada foto ~0.5 s despues) o hasta este max
+    w_meta: float = 0.8             # rad/s maximos al girar entre rumbos (21/11: a 1.6 las fotos salian corridas y
+                                    # girando a > 1 rad/s no se reconoce)
 
 
 # arcos que prueba la ventana dinamica: 6 velocidades de 0 a vmax y 19 giros, mantenidos 1.2 s
@@ -1154,10 +1157,14 @@ class Carrera:
         err = wrap(m["rumbos"][0] - th)
         if m["mirando_desde"] is None:
             if abs(err) > 0.1 and now - m["t_punto"] < 8.0:
-                return 0.0, float(np.clip(2.2 * err, -1.6, 1.6))
-            m["mirando_desde"] = now
+                return 0.0, float(np.clip(2.0 * err, -self.cfg.w_meta, self.cfg.w_meta))   # (girando rapido la foto
+            m["mirando_desde"] = now                                                        # sale corrida: 21/11)
+            m["fotos0"] = self._fotos
             return 0.0, 0.0
-        if now - m["mirando_desde"] < self.cfg.mirar_meta_s:
+        # quieto hasta tener 2 fotos tomadas ya parado (la Pi tarda ~0.5 s en entregar cada una), minimo
+        # mirar_meta_s y maximo mirar_meta_max
+        quieto = now - m["mirando_desde"]
+        if quieto < self.cfg.mirar_meta_s or (quieto < self.cfg.mirar_meta_max and self._fotos - m["fotos0"] < 3):
             return 0.0, 0.0
         m["rumbos"].pop(0)
         m.update(t_punto=now, mirando_desde=None)
@@ -1455,6 +1462,9 @@ class Carrera:
         if self.cfg.temprano and self._seguro() and d < self.cfg.d_temprano:
             return self._decidir(now, "temprano")
         cerca = d <= self.cfg.d_parada + 0.05 and self.px_extra == 1.0
+        if (cerca and self.cfg.buscar and o.px < self.cfg.px_confirmar and now - o.t < 1.0
+                and self.libre_frente > self.cfg.d_parada + 0.1):
+            cerca = False                     # la cara sigue chica: la distancia (LiDAR) debe estar mal; seguir
         grande = o.px >= self.cfg.px_objetivo * self.px_extra and o.t > now - 1.0 and d <= self.cfg.d_max_b
         if grande or cerca or (o.borde_sup and d <= self.cfg.d_max_b):   # (cortada arriba de lejos: no es "cerca")
             self.nota(now, f"frente a la foto: {d:.2f} m, cara de {o.px:.0f} px: RECONOCER")
@@ -1506,7 +1516,9 @@ class Carrera:
                                                   and self.obj.ancho_max >= self.cfg.px_confirmar))):
             return self._decidir(now, "ranking confirmado de cerca" if self.obj.por_ranking else "votacion temprana")
         sin_ver = self.obj.visto_hace(now)
-        if self.cfg.buscar and self.obj.por_ranking and self.vot.n >= 3 and now - self.t_reconocer > 1.5:
+        if (self.cfg.buscar and self.obj.por_ranking and self.vot.n >= 3 and now - self.t_reconocer > 1.5
+                and (self.obj.ancho_max >= self.cfg.px_confirmar or self.libre_frente < self.cfg.d_parada
+                     or self.px_extra > 1.0)):
             # elegida por ranking y ya vista de cerca con 3 votos: decidir ya (descartar, dudosa o es), sin esperar
             # los reconocer_max_s (con 4 fotos para revisar, 6 s cada una era mucho)
             return self._decidir(now, "ranking, de cerca")
@@ -1515,8 +1527,7 @@ class Carrera:
             # (por ranking recien llegado y sin verla: primero girar a mirarla, abajo; no decidir con votos viejos)
             t_carrera = now - (self.t_inicio if self.t_inicio is not None else now)
             if (self.obj.ancho_max < self.cfg.px_min_decidir and self.px_extra == 1.0 and not o.borde_sup
-                    and t_carrera < self.cfg.t_limite_decidir and self.libre_frente > 0.5
-                    and not (self.cfg.buscar and self.obj.por_ranking)):   # (por ranking: si no se sabe, queda dudosa)
+                    and t_carrera < self.cfg.t_limite_decidir and self.libre_frente > 0.5):
                 # (con la pared a menos de 0.5 m no hay mas que acercarse: la foto es chica, se decide asi)
                 # solo vio la cara chica: acercarse mas antes de arriesgar el nombre (una vez)
                 self.nota(now, f"cara de solo {self.obj.ancho_max:.0f} px: me acerco mas antes de decidir")

@@ -50,7 +50,7 @@ def distancia_lidar(scan, rumbo, ancho=math.radians(2.5)):
 
 
 class Percepcion:
-    def __init__(self, reconocedor, det_flechas, hfov=42.0, min_px_reconocer=10, cara_m=0.11, flecha_m=0.14,
+    def __init__(self, reconocedor, det_flechas, hfov=42.0, min_px_reconocer=10, cara_m=0.05, flecha_m=0.14,
                  hfov_hd=None, qr_m=0.10, max_caras=3, det_bandera=None, bandera_m=0.297):
         self._t_completo = -1e9       # ultima vez que YuNet reviso la imagen entera (con cajas de la camara)
         self.rec, self.det_fl = reconocedor, det_flechas
@@ -101,9 +101,10 @@ class Percepcion:
             if c.score < 0.7:
                 continue
             u, _ = c.centro
-            # la cara de una foto puede medir de 4 a 15 cm: el tamano casi no sirve, manda el LiDAR. Si el LiDAR
-            # da menos, la foto no puede estar mas lejos (las cajas tapan igual a la camara, que va mas baja)
-            rumbo, d, xy = self._ubicar(u, W, c.ancho, self.cara_m, pose, scan, dth, rango=(0.12, 1.6))
+            # la cara de las fotos impresas mide ~5 cm (19/11). Manda el LiDAR mientras cuadre con el tamano
+            # (0.5-1.6 veces): si el LiDAR da mucho menos es que pego en una caja o en la pared de al lado y la
+            # foto esta mas lejos (21/11: "frente a la foto: 0.39 m, cara de 18 px" = en realidad a ~0.9 m)
+            rumbo, d, xy = self._ubicar(u, W, c.ancho, self.cara_m, pose, scan, dth, rango=(0.5, 1.6))
             # girando rapido la foto sale corrida (19/11): solo se ubica la cara, sin ArcFace (lo mas caro en la Pi)
             res = self.rec.resultado(img, c) if c.ancho >= self.min_px and abs(w) < 1.0 else None
             caras.append(Obs("cara", t, rumbo, d, xy, c.ancho, c.caja, res=res,
