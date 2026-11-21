@@ -85,7 +85,7 @@ class Config:
     #                                 del suelo: de muy cerca la cara sale cortada arriba y se reconoce mal)
     margen_qr: float = 0.08         # el QR cuenta si su cara se reconoce como la buscada con esta ventaja (coseno)
     qr_max_s: float = 30.0          # s maximos frente a la foto buscando el QR (despues vuelve igual)
-    d_frente_qr: float = 0.55       # m: frente a la foto para leer el QR. El QR va DEBAJO de la foto, a la altura de
+    d_frente_qr: float = 0.65       # m: frente a la foto para leer el QR (21/11: 0.55 era muy cerca). El QR va DEBAJO de la foto, a la altura de
                                     # la camara (13 cm): a 0.55 m mide ~57 px en la preview y se lee sin HD, y la
                                     # cara todavia entra (a 0.45 m la de un retrato de medio cuerpo queda cortada)
     qr_preview_s: float = 5.0       # s leyendo de la preview antes de pedir HD (en la Raspberry la HD tarda ~4 s)
@@ -108,13 +108,13 @@ class Config:
     p_descartar: float = 0.6        # ...y se DESCARTA solo si otra persona gana con p >= esto; si de cerca no se sabe
                                     # quien es (p chicas), queda "dudosa" y se revisan primero las demas
     # --- la meta del 21/11: bandera a cuadros al fondo del tubo, 4 fotos en los costados (2 y 2) ---
-    d_meta: float = 0.9             # m del fondo a los que se para a mirar los costados (desde ahi una foto a 0.5 m
+    d_meta: float = 0.65            # m del fondo a los que se para a mirar los costados (21/11: con 0.9 quedaba lejos) (desde ahi una foto a 0.5 m
                                     # de la pared de al lado mide ~33 px; a 1 m del punto, ~17 px: se ve, se vota poco)
     barrido_meta: tuple = (60.0, 120.0, -120.0, -60.0)   # grados respecto al fondo, en orden (la camara ve 42: con
                                     # 4 rumbos cubre de 39 a 141 grados a cada lado; 6 rumbos tardaban 14 s, estos ~10)
     mirar_meta_s: float = 1.2       # s quieto en cada rumbo del barrido, minimo; sigue quieto hasta recibir 3 fotos
     mirar_meta_max: float = 2.5     # (2 tomadas ya parado: la Pi entrega cada foto ~0.5 s despues) o hasta este max
-    w_meta: float = 0.8             # rad/s maximos al girar entre rumbos (21/11: a 1.6 las fotos salian corridas y
+    w_meta: float = 0.5             # rad/s maximos al girar entre rumbos (21/11: lento, que las fotos salgan nitidas) (21/11: a 1.6 las fotos salian corridas y
                                     # girando a > 1 rad/s no se reconoce)
 
 
@@ -590,9 +590,12 @@ class Carrera:
             return None
         # las ya miradas de cerca sin saber quien es (dudosas) van despues de las que faltan revisar
         orden = sorted(vistas, key=lambda c: (c.revisiones, -self._p_buscada(c)))
-        if (orden[0].revisiones >= 1 and self.cfg.n_fotos and n_vistas < self.cfg.n_fotos
-                and not self._fila_completa):
+        todas = self.cfg.n_fotos and n_vistas >= self.cfg.n_fotos
+        if orden[0].revisiones >= 1 and not todas and not self._fila_completa:
             return None                                          # solo quedan dudosas y faltan fotos por ver: buscarlas
+        if orden[0].revisiones >= 2 and not (todas and len(vistas) == 1):
+            return None                                          # ya revisada dos veces sin saber: no oscilar entre
+                                                                 # dudosas (21/11); seguir buscando
         p1 = self._p_buscada(orden[0])
         mismas = [c for c in orden[1:] if c.revisiones == orden[0].revisiones]
         p2 = self._p_buscada(mismas[0]) if mismas else 0.0
@@ -972,8 +975,9 @@ class Carrera:
 
     def _leer_qr(self, now, pos):
         """Frente a la foto de la buscada. Primero se pone DE FRENTE (a 0.6 m sobre la normal de la pared: de
-        costado el QR no se lee aunque la cara si se reconozca); despues quieto -> mira 12 grados a cada lado
-        -> se acerca hasta d_qr -> se aleja un poco -> otra vez. A los qr_max_s se rinde y vuelve igual
+        costado el QR no se lee aunque la cara si se reconozca); despues quieto -> RETROCEDE despacio (21/11: de
+        cerca el QR de abajo queda fuera del cuadro) -> quieto -> mira 12 grados a cada lado -> se acerca hasta
+        d_qr -> quieto -> otra vez. A los qr_max_s se rinde y vuelve igual
         (anunciara el nombre)."""
         f = self._qr
         if now - f["t_ini"] > self.cfg.qr_max_s:
@@ -1011,32 +1015,36 @@ class Carrera:
             return float(np.clip(1.8 * wrap(obj - th), -0.5, 0.5))
 
         def sig():
-            f["paso"], f["t0"] = (f["paso"] + 1) % 6, now
+            f["paso"], f["t0"] = (f["paso"] + 1) % 7, now
 
         paso = f["paso"]
         if paso == 0:                                              # quieto (la camara toma 2-3 fotos)
             if dt > 1.5:
                 sig()
             return 0.0, girar(f["th0"])
-        if paso in (1, 2):                                         # mirar a cada lado (por si el QR no esta debajo)
-            obj = wrap(f["th0"] + math.radians(12) * (1 if paso == 1 else -1))
+        if paso == 1:                                              # RETROCEDER despacio mirando la foto (21/11: de
+            if dt > 5.0 or self.libre_atras < 0.45:                # cerca el QR de abajo queda fuera de la camara)
+                sig()
+                return 0.0, 0.0
+            return -0.07, girar(f["th0"])
+        if paso == 2:                                              # quieto de lejos
+            if dt > 1.5:
+                sig()
+            return 0.0, girar(f["th0"])
+        if paso in (3, 4):                                         # mirar a cada lado (por si el QR no esta debajo)
+            obj = wrap(f["th0"] + math.radians(12) * (1 if paso == 3 else -1))
             if abs(wrap(obj - th)) < 0.05 and dt > 0.8 or dt > 3.0:
                 sig()
             return 0.0, girar(obj)
         muy_cerca = o is not None and now - o.t < 1.0 and (o.px > self.cfg.px_qr_max or o.borde_sup)
-        if paso == 3:                                              # acercarse (el QR sale mas grande)
+        if paso == 5:                                              # acercarse (el QR sale mas grande)
             if self.libre_frente <= self.cfg.d_qr + 0.02 or dt > 6.0 or muy_cerca:
                 sig()
                 return 0.0, 0.0
             return 0.06, girar(f["th0"])
-        if paso == 4:                                              # quieto de cerca
-            if dt > 1.5:
-                sig()
-            return 0.0, girar(f["th0"])
-        if (dt > 3.0 and not muy_cerca) or dt > 7.0 or self.libre_atras < 0.45:   # paso 5: alejarse ~25 cm y repetir
-            sig()                                                  # (mas, mientras la cara salga cortada o enorme)
-            return 0.0, 0.0
-        return -0.08, girar(f["th0"])
+        if dt > 1.5:                                               # paso 6: quieto de cerca; luego otra vuelta
+            sig()                                                  # (retrocede de nuevo)
+        return 0.0, girar(f["th0"])
 
     def ver_flecha(self, now, o):
         if self.sen is None or not self.cfg.usar_flechas or self.estado not in BUSCANDO:
