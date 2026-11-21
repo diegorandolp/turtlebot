@@ -112,6 +112,9 @@ class Config:
                                     # de la pared de al lado mide ~33 px; a 1 m del punto, ~17 px: se ve, se vota poco)
     barrido_meta: tuple = (45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0)   # grados respecto a la bandera, en orden:
                                     # una vuelta entera en un solo sentido, parando cada 45 (21/11: "rotar lento en 360")
+    confirmar_hd: bool = False      # (carrera.py lo activa con la bandera) confirmar cada foto de cerca con fotos HD si en la preview la cara es chica
+    px_hd_confirmar: float = 40.0   # px: con la cara asi de grande ya no hace falta HD
+    t_confirmar_max: float = 11.0   # s maximos frente a una foto para confirmarla (2 fotos HD en la Pi)
     exigir_bandera: bool = False    # (carrera.py lo activa) las fotos solo cuentan si hay bandera confirmada y estan a < r_meta de ella
     r_meta: float = 2.2             # m: (21/11: tomaba caras de gente del fondo del lab y fotos sueltas por meta)
     t_sin_bandera: float = 100.0    # s de carrera sin ver la bandera: desde ahi cualquier cara cuenta (respaldo)
@@ -392,9 +395,19 @@ class Carrera:
     def quiere_hd(self):
         """Pedir fotos HD para el QR: solo frente a la foto y si la preview no alcanzo en qr_preview_s (en la
         Raspberry cada foto HD tarda ~4 s: pedirla al acercarse, como antes, frenaba todo)."""
+        if self.confirmando_hd:
+            return True
         f = self._qr
         return bool(self.quiere_qr and self.estado == LEER_QR and f is not None and f["paso"] >= 0
                     and self._t_ahora - f.get("t_frente", f["t_ini"]) > self.cfg.qr_preview_s)
+
+    @property
+    def confirmando_hd(self):
+        """Frente a una foto que hay que confirmar y en la preview la cara salio chica (< px_hd_confirmar): pedir
+        fotos HD (21/11: en la preview las fotos del lab miden 14-25 px y el reconocimiento no distingue a nadie;
+        en la HD la misma cara mide ~3 veces mas). Cada HD tarda ~4 s en la Pi: una o dos por foto."""
+        return bool(self.cfg.buscar and self.cfg.confirmar_hd and self.estado == RECONOCER and self.obj is not None
+                    and self.obj.ancho_max < self.cfg.px_hd_confirmar)
 
     @property
     def quiere_qr(self):
@@ -1515,7 +1528,9 @@ class Carrera:
             cerca = False                     # la cara sigue chica: la distancia (LiDAR) debe estar mal; seguir
         grande = o.px >= self.cfg.px_objetivo * self.px_extra and o.t > now - 1.0 and d <= self.cfg.d_max_b
         if grande or cerca or (o.borde_sup and d <= self.cfg.d_max_b):   # (cortada arriba de lejos: no es "cerca")
-            self.nota(now, f"frente a la foto: {d:.2f} m, cara de {o.px:.0f} px: RECONOCER")
+            self.nota(now, f"frente a la foto: {d:.2f} m, cara de {o.px:.0f} px: RECONOCER"
+                           + (" (confirmo con fotos HD)" if (self.cfg.buscar and self.cfg.confirmar_hd
+                                                              and self.obj.ancho_max < self.cfg.px_hd_confirmar) else ""))
             self.estado = RECONOCER
             self.t_reconocer = now
             self.t_b = now
@@ -1564,14 +1579,19 @@ class Carrera:
                                                   and self.obj.ancho_max >= self.cfg.px_confirmar))):
             return self._decidir(now, "ranking confirmado de cerca" if self.obj.por_ranking else "votacion temprana")
         sin_ver = self.obj.visto_hace(now)
-        if (self.cfg.buscar and self.obj.por_ranking and self.vot.n >= 3 and now - self.t_reconocer > 1.5
-                and (self.obj.ancho_max >= self.cfg.px_confirmar or self.libre_frente < self.cfg.d_parada
-                     or self.px_extra > 1.0)):
+        if self.cfg.buscar and self.obj.por_ranking and self.vot.n >= 3 and now - self.t_reconocer > 1.5 and (
+                (self.cfg.confirmar_hd and (self.obj.ancho_max >= self.cfg.px_hd_confirmar
+                                            or now - self.t_reconocer > self.cfg.t_confirmar_max))
+                or (not self.cfg.confirmar_hd and (self.obj.ancho_max >= self.cfg.px_confirmar
+                                                   or self.libre_frente < self.cfg.d_parada or self.px_extra > 1.0))):
             # elegida por ranking y ya vista de cerca con 3 votos: decidir ya (descartar, dudosa o es), sin esperar
             # los reconocer_max_s (con 4 fotos para revisar, 6 s cada una era mucho)
             return self._decidir(now, "ranking, de cerca")
-        if self.vot.n > 0 and (now - self.t_reconocer > self.cfg.reconocer_max_s
-                               or (sin_ver > 2.5 and (now - self.t_reconocer > 3.0 or not self.obj.por_ranking))):
+        espera = (self.cfg.t_confirmar_max if (self.cfg.buscar and self.cfg.confirmar_hd and self.obj.por_ranking)
+                  else self.cfg.reconocer_max_s)
+        if self.vot.n > 0 and (now - self.t_reconocer > espera
+                               or (sin_ver > (6.0 if self.confirmando_hd else 2.5)
+                                   and (now - self.t_reconocer > 3.0 or not self.obj.por_ranking))):
             # (por ranking recien llegado y sin verla: primero girar a mirarla, abajo; no decidir con votos viejos)
             t_carrera = now - (self.t_inicio if self.t_inicio is not None else now)
             if (self.obj.ancho_max < self.cfg.px_min_decidir and self.px_extra == 1.0 and not o.borde_sup

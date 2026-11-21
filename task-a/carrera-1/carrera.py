@@ -327,6 +327,7 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
     rec, per, engine, nav, cov = armar(args, excluir)
     if sim and mundo is not None and not any(getattr(k, "tipo", "") == "bandera" for k in mundo.carteles):
         nav.cfg.exigir_bandera = False                                   # mundo viejo sin bandera
+    nav.cfg.confirmar_hd = nav.cfg.exigir_bandera                        # meta del 21/11: confirmar con HD
     if args.traza:
         nav.traza = []                                                   # (t, estado, x, y, yaw, h_pref, phi, v, w)
     reloj = (lambda: robot.time) if sim else time.monotonic
