@@ -4,6 +4,7 @@ Percepcion por camara (Tarea A, carrera-1): de cada foto saca las caras y las fl
 ese rumbo: la foto y las senales estan pegadas a una superficie que el LiDAR ve).
 
   Percepcion.procesar(img, pose, scan, leer_qr=False) -> (caras, flechas, qrs)   listas de Obs
+               (con det_bandera, la bandera a cuadros de la meta va en `flechas` como Obs tipo "bandera")
   Objetivo     junta las caras vistas de UNA foto: donde esta y la votacion de quien es (con --buscar
                hay una por cada foto de la meta; ver navegador.Carrera.ver_cara)
   Senales      junta las flechas vistas: cada senal con su posicion y su sentido confirmado
@@ -23,7 +24,7 @@ from qr import buscar_qrs
 
 @dataclass
 class Obs:
-    tipo: str                   # "cara" | "flecha" | "qr"
+    tipo: str                   # "cara" | "flecha" | "qr" | "bandera" (la bandera a cuadros de la meta, 21/11)
     t: float                    # instante de la foto
     rumbo: float                # rad, + izquierda, respecto al frente del robot al tomar la foto
     dist: float                 # m hasta la superficie (LiDAR; si no hay lectura, por el tamano)
@@ -50,9 +51,10 @@ def distancia_lidar(scan, rumbo, ancho=math.radians(2.5)):
 
 class Percepcion:
     def __init__(self, reconocedor, det_flechas, hfov=42.0, min_px_reconocer=10, cara_m=0.11, flecha_m=0.14,
-                 hfov_hd=None, qr_m=0.10, max_caras=3):
+                 hfov_hd=None, qr_m=0.10, max_caras=3, det_bandera=None, bandera_m=0.297):
         self._t_completo = -1e9       # ultima vez que YuNet reviso la imagen entera (con cajas de la camara)
         self.rec, self.det_fl = reconocedor, det_flechas
+        self.det_band, self.bandera_m = det_bandera, bandera_m   # bandera.DetectorBandera (hoja A4 apaisada)
         self.hfov = math.radians(hfov)
         self.hfov_hd = math.radians(hfov_hd) if hfov_hd else self.hfov   # fotos HD (16:9): otro campo de vision
         self.qr_m = qr_m
@@ -107,13 +109,25 @@ class Percepcion:
             caras.append(Obs("cara", t, rumbo, d, xy, c.ancho, c.caja, res=res,
                              borde_sup=c.caja[1] < 0.04 * H, girando=girando))
         cajas = [o.caja for o in caras]
+        # la bandera a cuadros de la meta (21/11): en la pared del fondo del tubo. Solo en la preview (en la HD,
+        # frente a la foto, es puro costo) y no mientras se gira rapido (sale corrida)
+        banderas = []
+        if self.det_band is not None and W <= 400 and not leer_qr and abs(w) < 1.0:
+            for b in self.det_band(img)[:1]:
+                u, v = b.centro
+                rumbo, d, xy = self._ubicar(u, W, b.ancho, self.bandera_m, pose, scan, dth, rango=(0.4, 2.5))
+                banderas.append(Obs("bandera", t, rumbo, d, xy, b.ancho, b.caja, girando=girando))
         # frente a la meta (leer_qr) las flechas ya no se usan: en una foto HD buscarlas es puro costo en la Pi
         for f in ([] if (leer_qr and W > 400) else self.det_fl(img)[:4]):
             u, v = f.centro
             if any(x - 1.6 * w <= u <= x + 2.6 * w and y - 0.8 * h <= v <= y + 4.0 * h for x, y, w, h in cajas):
                 continue                                  # dentro de la hoja de una foto (ojos, ropa, el QR): no es flecha
+            if any(x - 0.2 * w <= u <= x + 1.2 * w and y - 0.2 * h <= v <= y + 1.2 * h for x, y, w, h in
+                   (o.caja for o in banderas)):
+                continue                                  # un trozo de la bandera no es una flecha
             rumbo, d, xy = self._ubicar(u, W, f.lado, self.flecha_m, pose, scan, dth)
             flechas.append(Obs("flecha", t, rumbo, d, xy, f.lado, f.caja, dir=f.dir, girando=girando))
+        flechas += banderas
         qrs = []
         if leer_qr:                                       # sin cara al lado solo cuenta frente a la buscada (ver_qr)
             for q in buscar_qrs(img, cajas):
@@ -146,6 +160,7 @@ class Objetivo:
         self.por_ranking = False    # con --buscar: elegida como la buscada por ser la mas parecida (ver navegador)
         self.descartada = False     # con --buscar: se la miro de cerca y es otra persona
         self.intentos_frente = 0    # con --buscar: veces que se fue a mirarla de frente porque se la veia de costado
+        self.revisiones = 0         # con --buscar: veces que se la miro de cerca sin poder decir quien es (dudosa)
 
     def agregar(self, o, peso, pose=None):
         if not o.girando or self.xy is None:

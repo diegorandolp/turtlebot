@@ -228,6 +228,30 @@ guarda en `task-a/carrera-1/mis_mapas/` y se corre con `--mundo mapa:mis_mapas/<
 `banco_pruebas.py --mundos mapa:mis_mapas/a.json mapa:mis_mapas/a.json@2 ...`; `@N` = otra semilla: otras
 personas al azar y otros QR). Ejemplo: `mis_mapas/ejemplo_19_11.json`.
 
+## La meta del 21/11: bandera al fondo, 4 fotos (2 y 2) y señales de colores
+
+Lo que dijo el profe el 21/11: en la pared del fondo del tubo va una **bandera a cuadros** (hoja A4 apaisada);
+las fotos van en los costados, **2 y 2, siempre 4**, y la buscada es una de ellas. Las señales son **discos de
+color con una flecha negra: azul = ida, rojo = vuelta**; también hay discos lisos y señales de prohibido.
+
+- **`bandera.py`**: detector de la bandera (muchos cuadros negros parejos sobre papel blanco: alternan en las dos
+  direcciones y las corridas son parejas; un QR o un texto no). Probado con la foto del lab de 1 a 3 m, sin
+  falsos positivos con QR ni textos. Es una `Obs` tipo `bandera` en `percepcion`.
+- **`flechas.DetectorDiscos`**: flechas negras sobre disco **azul** (cuentan como las blanco y negro, que siguen
+  igual). Los discos **rojos**, los lisos y el prohibido se ignoran: la vuelta usa el camino recorrido.
+- **Estado `META`** (navegador): con la bandera confirmada (2 vistas) va al centro del tubo a `d_meta` (0.9 m) del
+  fondo y ahí, quieto, gira a ±60 y ±120 grados para ver las 4 fotos (~10 s). Luego **ranking sin umbral**: va a
+  la más parecida a la buscada, la confirma de cerca (cara ≥ 24 px, la buscada gana con p ≥ 0.5) y si de cerca
+  gana otra persona con p ≥ 0.6 la **descarta** y pasa a la siguiente. Si de cerca no se sabe quién es, queda
+  "dudosa" y se revisan primero las demás; vistas las 4 y descartadas las otras, es esa (por descarte).
+  `--n-fotos 4` es el defecto (0 = no se sabe); `--sin-bandera` vuelve a la búsqueda por fila; `--d-meta`.
+- **Registro**: `marcas` (s de carrera de bandera, centro, barrido, ranking), `descartes`, `bandera` (x, y) y
+  `candidatas` (una línea por foto: posición, p de ser la buscada, a quién se parece, votos, tamaño, estado). En
+  el log: "ranking (...)" con la tabla de candidatas, "descartada #k, quedan N", "dudosa".
+- Simulador: `tubo:N` ahora trae la bandera, 4 fotos cerca del fondo (2 y 2), señales azules o blanco y negro en
+  los giros y distractores (rojas, lisas, prohibido). Banco `tubo:1..16` (Pi, 3 min, `--turbo`): **15/16, mediana
+  82 s** (la búsqueda de antes en estos mundos: 8/16, 135 s).
+
 **Vuelta rápida: `--turbo`.** En la vuelta (camino ya conocido) va a 0.45 m/s y mira más adelante en la ruta
 (0.6 m + 1.6 × (v − 0.2): ~1 m a 0.45 m/s), así empieza a doblar antes y en curva en vez de frenar en la esquina
 (la ventana dinámica sigue revisando cada arco contra el LiDAR). En el robot necesita `robot/preparar.sh --rapido`
