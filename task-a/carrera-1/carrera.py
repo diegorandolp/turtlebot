@@ -117,6 +117,7 @@ def armar(args, excluir=()):
     cfg = Config(vmax=args.vel, vmax_vuelta=vuelta, temprano=args.temprano,
                  usar_flechas=not args.sin_flechas, buscar=buscar, leer_qr=not args.sin_qr,
                  n_fotos=getattr(args, "n_fotos", 0) or 0,
+                 exigir_bandera=bool(buscar) and not getattr(args, "sin_bandera", False),
                  **({"d_meta": args.d_meta} if getattr(args, "d_meta", None) else {}))
     pl_fino = Planner(MAP_M, MAP_PX, cell=2, robot_radius=0.10, margin=0.0)
     nav = Carrera(cfg, pl, vot, Objetivo(vot), Senales(min_n=2), exp, planner_fino=pl_fino)
@@ -324,6 +325,8 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
         if mundo.rostros and not args.buscar:
             args.buscar = mundo.persona                                  # simulador: buscar a la del mundo
     rec, per, engine, nav, cov = armar(args, excluir)
+    if sim and mundo is not None and not any(getattr(k, "tipo", "") == "bandera" for k in mundo.carteles):
+        nav.cfg.exigir_bandera = False                                   # mundo viejo sin bandera
     if args.traza:
         nav.traza = []                                                   # (t, estado, x, y, yaw, h_pref, phi, v, w)
     reloj = (lambda: robot.time) if sim else time.monotonic

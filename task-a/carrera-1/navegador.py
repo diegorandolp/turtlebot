@@ -110,11 +110,15 @@ class Config:
     # --- la meta del 21/11: bandera a cuadros al fondo del tubo, 4 fotos en los costados (2 y 2) ---
     d_meta: float = 0.65            # m del fondo a los que se para a mirar los costados (21/11: con 0.9 quedaba lejos) (desde ahi una foto a 0.5 m
                                     # de la pared de al lado mide ~33 px; a 1 m del punto, ~17 px: se ve, se vota poco)
-    barrido_meta: tuple = (60.0, 120.0, -120.0, -60.0)   # grados respecto al fondo, en orden (la camara ve 42: con
-                                    # 4 rumbos cubre de 39 a 141 grados a cada lado; 6 rumbos tardaban 14 s, estos ~10)
+    barrido_meta: tuple = (45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0)   # grados respecto a la bandera, en orden:
+                                    # una vuelta entera en un solo sentido, parando cada 45 (21/11: "rotar lento en 360")
+    exigir_bandera: bool = False    # (carrera.py lo activa) las fotos solo cuentan si hay bandera confirmada y estan a < r_meta de ella
+    r_meta: float = 2.2             # m: (21/11: tomaba caras de gente del fondo del lab y fotos sueltas por meta)
+    t_sin_bandera: float = 100.0    # s de carrera sin ver la bandera: desde ahi cualquier cara cuenta (respaldo)
+    z_max_cara: float = 0.5         # m: una cara mas alta que esto no es de una foto de la meta (es una persona)
     mirar_meta_s: float = 1.2       # s quieto en cada rumbo del barrido, minimo; sigue quieto hasta recibir 3 fotos
     mirar_meta_max: float = 2.5     # (2 tomadas ya parado: la Pi entrega cada foto ~0.5 s despues) o hasta este max
-    w_meta: float = 0.5             # rad/s maximos al girar entre rumbos (21/11: lento, que las fotos salgan nitidas) (21/11: a 1.6 las fotos salian corridas y
+    w_meta: float = 0.4             # rad/s maximos al girar entre rumbos (21/11: lento, que las fotos salgan nitidas) (21/11: a 1.6 las fotos salian corridas y
                                     # girando a > 1 rad/s no se reconoce)
 
 
@@ -424,10 +428,21 @@ class Carrera:
         r = o.res
         clara = r is not None and o.px >= self.cfg.px_descartar and r.margen >= self.cfg.margen_qr
         cerca = []
+        x, y = self._pos[:2]
+        a_o = math.atan2(o.xy[1] - y, o.xy[0] - x)
+        # el rumbo solo sirve si se ve la pared de frente (de refilon dos fotos vecinas quedan en casi el mismo rumbo)
+        n = self._normal_pared(o.xy)
+        hacia = np.array([x - o.xy[0], y - o.xy[1]], float)
+        de_frente = float(n @ hacia) / max(float(np.linalg.norm(hacia)), 1e-6) > math.cos(math.radians(40))
+        con_bandera = self.bandera is not None and self.bandera["n"] >= 2       # (solo en la meta del 21/11)
         for c in self.candidatas:
             if c.xy is not None:
                 d = float(np.hypot(c.xy[0] - o.xy[0], c.xy[1] - o.xy[1]))
-                if d < self.cfg.d_candidata:
+                # misma direccion vista desde el robot (< 5 grados) y no muy lejos: es la misma foto aunque la
+                # distancia (LiDAR o tamano) haya salido distinta (21/11: una foto se partia en 2-3 candidatas y el
+                # robot oscilaba entre ellas)
+                da = abs(wrap(math.atan2(c.xy[1] - y, c.xy[0] - x) - a_o))
+                if d < self.cfg.d_candidata or (con_bandera and de_frente and da < math.radians(5) and d < 0.5):
                     cerca.append((d, c))
         for d, c in sorted(cerca, key=lambda t: t[0]):
             if clara and c.vot.n >= 3:
@@ -465,9 +480,24 @@ class Carrera:
         else:
             c.estado = "pendiente"
 
+    def _en_meta(self, xy):
+        """La foto en xy puede ser de la meta: hay bandera confirmada y esta a < r_meta de ella (o no se exige
+        bandera, o paso t_sin_bandera sin verla)."""
+        if not self.cfg.exigir_bandera:
+            return True
+        b = self.bandera
+        if b is None or b["n"] < 2:
+            t = 0.0 if self.t_inicio is None else self._t_ahora - self.t_inicio
+            return t >= self.cfg.t_sin_bandera
+        return math.hypot(xy[0] - b["xy"][0], xy[1] - b["xy"][1]) < self.cfg.r_meta
+
     def _ver_cara_buscar(self, now, o, peso):
         if self.estado in (PAUSA, VOLVER, HECHO):
             return False
+        if not self._en_meta(o.xy):
+            return False                                        # sin bandera (o lejos de ella) una cara no es la meta
+        if self.cfg.exigir_bandera and getattr(o, "z", 0.0) > self.cfg.z_max_cara:
+            return False                                        # muy alta: una persona, no una foto pegada abajo
         c = self._candidata_para(o)
         if c is None:
             v0 = self._vot0
@@ -506,6 +536,10 @@ class Carrera:
         def vale(c):
             return now > c.t_ignorar or c.visto_hace(now) < 1.0
         objs = [c for c in self.candidatas if c.estado == "objetivo" and vale(c)]
+        if self.estado == META and self._meta is not None and self._meta["fase"] == "girar":
+            objs = [c for c in objs if c.vot.lider()[0] == self.cfg.buscar and c.vot.lider()[1] >= self.cfg.p_temprana]
+            if not objs:
+                return                                             # barriendo: nada lo interrumpe salvo la buscada segura
         if not objs:
             r = self._ranking(now)
             if r is not None:
@@ -577,13 +611,14 @@ class Carrera:
         (de las que no se descartaron de cerca): no hace falta estar seguro de cada una, se confirma de cerca y
         si no es, se va a la siguiente (el 19/11 Thiago tenia 0.96 a los 15 s y se confirmo recien a los 52 s).
         Con rank_p / rank_ventaja > 0 se exige ademas ese minimo y esa ventaja sobre la segunda."""
-        if self.estado in (PAUSA, VOLVER, HECHO, LEER_QR):
-            return None
-        vistas = [c for c in self.candidatas if c.xy is not None and c.n >= 2 and c.vot.n >= 1
+        if self.estado in (PAUSA, VOLVER, HECHO, LEER_QR, META):
+            return None                                          # (en META: primero la vuelta entera)
+        vistas = [c for c in self.candidatas if c.xy is not None and c.n >= 2 and c.vot.n >= 1 and self._en_meta(c.xy)
                   and not c.descartada and c.estado != "otra" and (now > c.t_ignorar or c.visto_hace(now) < 1.0)]
         if not vistas:
             return None
-        n_vistas = sum(1 for c in self.candidatas if c.xy is not None and c.n >= 2 and c.vot.n >= 1)
+        n_vistas = sum(1 for c in self.candidatas if c.xy is not None and c.n >= 2 and c.vot.n >= 1
+                       and self._en_meta(c.xy))
         completo = ((self.cfg.n_fotos > 0 and n_vistas >= self.cfg.n_fotos) or self._fila_completa
                     or self._barrido_meta)
         if not completo:
@@ -1115,7 +1150,8 @@ class Carrera:
         if rs is not None and rq < 4.0 and rs < rq - 0.15:
             q = np.asarray(b["xy"], float) + max(0.5, self.cfg.d_meta - 0.3) * n   # detras de algo: mas cerca
         base = math.atan2(-n[1], -n[0])                             # mirando al fondo
-        rumbos = [wrap(base + math.radians(g)) for g in self.cfg.barrido_meta]
+        rumbos = [wrap(base + math.radians(g)) for g in self.cfg.barrido_meta]   # (wrap: el giro va por el lado corto,
+                                                                                  # paso a paso de 45 en el mismo sentido)
         self._meta = dict(punto=(float(q[0]), float(q[1])), rumbos=rumbos, fase="ir", t_ini=now, t_punto=now,
                           mirando_desde=None, base=base)
         self.estado = META
@@ -1125,7 +1161,7 @@ class Carrera:
         x, y = self._pos[:2]
         self.nota(now, f"META: voy al centro del tubo frente a la bandera ({q[0]:.2f}, {q[1]:.2f}), a "
                        f"{self.cfg.d_meta:.1f} m del fondo y {math.hypot(q[0] - x, q[1] - y):.1f} m de aqui; "
-                       f"ahi miro los costados ({len(rumbos)} rumbos)")
+                       f"ahi doy una vuelta lenta ({len(rumbos)} paradas)")
 
     def _meta_paso(self, now, pos, mapa):
         m = self._meta
@@ -1148,8 +1184,8 @@ class Carrera:
         if not m["rumbos"]:
             self._barrido_meta = True
             self.marca(now, "barrido")
-            vistas = [c for c in self.candidatas if c.xy is not None and c.n >= 2]
-            self.nota(now, f"barrido listo: {len(vistas)} fotos vistas"
+            vistas = [c for c in self.candidatas if c.xy is not None and c.n >= 2 and self._en_meta(c.xy)]
+            self.nota(now, f"vuelta completa: {len(vistas)} fotos de la meta vistas"
                            + (f" (se esperaban {self.cfg.n_fotos})" if self.cfg.n_fotos else ""))
             for linea in self._resumen_candidatas():
                 self.nota(now, "    " + linea)
@@ -1175,6 +1211,10 @@ class Carrera:
         if quieto < self.cfg.mirar_meta_s or (quieto < self.cfg.mirar_meta_max and self._fotos - m["fotos0"] < 3):
             return 0.0, 0.0
         m["rumbos"].pop(0)
+        vistas = [c for c in self.candidatas if c.xy is not None and c.vot.n >= 2 and self._en_meta(c.xy)]
+        if self.cfg.n_fotos and len(vistas) >= self.cfg.n_fotos and m["rumbos"]:
+            self.nota(now, f"ya vi las {len(vistas)} fotos de la meta: corto la vuelta")
+            m["rumbos"] = []
         m.update(t_punto=now, mirando_desde=None)
         return 0.0, 0.0
 

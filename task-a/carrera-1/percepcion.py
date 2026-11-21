@@ -37,6 +37,7 @@ class Obs:
     girando: bool = False       # foto tomada girando rapido: el rumbo y la distancia son poco fiables
     texto: str = ""             # QR: lo que dice
     cara: object = None         # QR: la Obs de la cara (de la misma foto) a la que pertenece, o None
+    z: float = 0.0              # caras: altura estimada del centro de la cara sobre el piso (m; camara a 13 cm)
 
 
 def distancia_lidar(scan, rumbo, ancho=math.radians(2.5)):
@@ -55,6 +56,7 @@ class Percepcion:
         self._t_completo = -1e9       # ultima vez que YuNet reviso la imagen entera (con cajas de la camara)
         self.rec, self.det_fl = reconocedor, det_flechas
         self.det_band, self.bandera_m = det_bandera, bandera_m   # bandera.DetectorBandera (hoja A4 apaisada)
+        self.cam_z = 0.13                                    # m: altura de la camara (OAK-D en el TB4 Lite)
         self.hfov = math.radians(hfov)
         self.hfov_hd = math.radians(hfov_hd) if hfov_hd else self.hfov   # fotos HD (16:9): otro campo de vision
         self.qr_m = qr_m
@@ -107,8 +109,13 @@ class Percepcion:
             rumbo, d, xy = self._ubicar(u, W, c.ancho, self.cara_m, pose, scan, dth, rango=(0.5, 1.6))
             # girando rapido la foto sale corrida (19/11): solo se ubica la cara, sin ArcFace (lo mas caro en la Pi)
             res = self.rec.resultado(img, c) if c.ancho >= self.min_px and abs(w) < 1.0 else None
+            # altura de la cara: las fotos van pegadas abajo (cara a 10-35 cm); una persona del laboratorio (sentada
+            # o de pie, al fondo) sale mucho mas alta (21/11: el robot fue a la cara de alguien sentado)
+            _, f_px = self._rumbo(u, W)
+            v_c = c.caja[1] + c.caja[3] / 2.0
+            z = self.cam_z + d * ((H - 1) / 2.0 - v_c) / f_px
             caras.append(Obs("cara", t, rumbo, d, xy, c.ancho, c.caja, res=res,
-                             borde_sup=c.caja[1] < 0.04 * H, girando=girando))
+                             borde_sup=c.caja[1] < 0.04 * H, girando=girando, z=float(z)))
         cajas = [o.caja for o in caras]
         # la bandera a cuadros de la meta (21/11): en la pared del fondo del tubo. Solo en la preview (en la HD,
         # frente a la foto, es puro costo) y no mientras se gira rapido (sale corrida)

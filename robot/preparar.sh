@@ -81,8 +81,10 @@ fi
 paso "3/6 puente UDP"
 if [ "$RAPIDO" -eq 1 ]; then
   bash robot/deploy_bridge.sh --bg -- --max-linear 0.46 || falla "deploy_bridge.sh"
-  "${SSH[@]}" "$TARGET" "$ROS; ros2 param set /motion_control safety_override full" \
-    && echo "[ok]   safety_override full (vuelve a none al reiniciar la Create 3): usar CARRERA_ARGS=\"--vel 0.45\"" \
+  # (en el TB4 con Jazzy los nodos de la Create 3 estan bajo /_do_not_use/: 21/11)
+  "${SSH[@]}" "$TARGET" "$ROS; ros2 param set /_do_not_use/motion_control safety_override full 2>/dev/null \
+      || ros2 param set /motion_control safety_override full" \
+    && echo "[ok]   safety_override full (vuelve a none al reiniciar la Create 3): CARRERA_ARGS=\"--turbo\" ya sirve" \
     || echo "[aviso] no se pudo poner safety_override full: la Create 3 seguira en 0.31 m/s"
 else
   bash robot/deploy_bridge.sh --bg || falla "deploy_bridge.sh"
