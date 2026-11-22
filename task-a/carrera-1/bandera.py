@@ -46,8 +46,35 @@ class Bandera:
 
 
 class DetectorBandera:
-    def __init__(self, min_lado=3):
+    def __init__(self, min_lado=3, sobre_carton=True, min_carton=0.35):
         self.min_lado = min_lado
+        self.sobre_carton = sobre_carton    # (22/11) la de verdad es una hoja blanca pegada en una caja de carton
+        self.min_carton = min_carton
+
+    @staticmethod
+    def carton_alrededor(img, caja):
+        """Fraccion del borde alrededor de la HOJA (la zona clara que contiene la caja de la bandera) que es
+        carton: tono naranja-marron (H 8-30 en OpenCV) con algo de color (S >= 18). Medido en los videos del
+        21/11: el carton alrededor da H 17-21, S 28-62; el piso y las paredes grises, S < 15."""
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        Hh, Ww = hsv.shape[:2]
+        X, Y, w, h = caja
+        V, S = hsv[:, :, 2], hsv[:, :, 1]
+        ref = float(np.percentile(V[Y:Y + h, X:X + w], 90))
+        papel = ((V >= 0.8 * ref) & (S < 60)).astype(np.uint8) * 255
+        papel = cv2.morphologyEx(papel, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+        papel[Y:Y + h, X:X + w] = 255
+        n, lab, st, _ = cv2.connectedComponentsWithStats(papel, connectivity=8)
+        i = lab[Y + h // 2, X + w // 2]
+        if i == 0 or st[i, 2] > 0.9 * Ww or st[i, 3] > 0.9 * Hh:
+            return 0.0                                      # la "hoja" se derrama por toda la imagen: no es una hoja
+        hoja = (lab == i).astype(np.uint8) * 255
+        k = max(5, int(0.06 * max(st[i, 2], st[i, 3])) | 1)
+        anillo = (cv2.dilate(hoja, np.ones((3 * k, 3 * k), np.uint8)) > 0) & (cv2.dilate(hoja, np.ones((k, k), np.uint8)) == 0)
+        if anillo.sum() < 10:
+            return 0.0
+        hh, ss = hsv[:, :, 0][anillo], S[anillo]
+        return float(((hh >= 8) & (hh <= 30) & (ss >= 18)).mean())
 
     @staticmethod
     def tinta(img):
@@ -160,6 +187,8 @@ class DetectorBandera:
                     continue
                 vistas.append((x, y, w, h))
                 out.append(Bandera((x, y, w, h), int(round((n_f + 1) / 2)), float(np.clip(1.0 - cv, 0.0, 1.0))))
+        if self.sobre_carton and img.ndim == 3:
+            out = [b for b in out if self.carton_alrededor(img, b.caja) >= self.min_carton]
         out.sort(key=lambda b: -(b.n * b.score))
         return out
 

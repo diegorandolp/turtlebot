@@ -121,7 +121,8 @@ class Config:
     exigir_bandera: bool = False    # (carrera.py lo activa) las fotos solo cuentan si hay bandera confirmada y estan a < r_meta de ella
     r_meta: float = 2.2             # m: (21/11: tomaba caras de gente del fondo del lab y fotos sueltas por meta)
     t_sin_bandera: float = 100.0    # s de carrera sin ver la bandera: desde ahi cualquier cara cuenta (respaldo)
-    r_salida: float = 1.5           # m: una bandera a menos de esto de A es la de la salida, no la meta
+    r_salida: float = 1.0           # m: una bandera a menos de esto de A es la de la salida, no la meta (22/11:
+                                    # 1 m y no mas, por si el circuito es una U con la meta cerca de la salida)
     z_max_cara: float = 0.5         # m: una cara mas alta que esto no es de una foto de la meta (es una persona)
     mirar_meta_s: float = 1.2       # s quieto en cada rumbo del barrido, minimo; sigue quieto hasta recibir 3 fotos
     mirar_meta_max: float = 2.5     # (2 tomadas ya parado: la Pi entrega cada foto ~0.5 s despues) o hasta este max
@@ -1136,6 +1137,8 @@ class Carrera:
             return False
         if math.hypot(o.xy[0] - self.home[0], o.xy[1] - self.home[1]) < self.cfg.r_salida:
             return False                                            # (22/11: tambien habra una bandera en la salida)
+        if any(math.hypot(o.xy[0] - fx, o.xy[1] - fy) < 1.0 for fx, fy in getattr(self, "banderas_falsas", [])):
+            return False                                            # ya se vio que ahi no hay fotos
         b = self.bandera
         if b is None or math.hypot(b["xy"][0] - o.xy[0], b["xy"][1] - o.xy[1]) > 1.0:
             if b is not None and b["n"] >= 2:
@@ -1255,6 +1258,16 @@ class Carrera:
                 self.nota(now, "    " + linea)
             self.estado = IDA
             self.t_nuevo = now
+            if not vistas and self.cfg.exigir_bandera:
+                # meta = bandera + rostros: una bandera sin fotos alrededor no es la meta (bandera falsa o la de la
+                # salida mal ubicada). Se descarta y se sigue buscando otra
+                b = self.bandera
+                self.banderas_falsas = getattr(self, "banderas_falsas", []) + [tuple(b["xy"])]
+                self.nota(now, f"la bandera de ({b['xy'][0]:.2f}, {b['xy'][1]:.2f}) no tiene fotos alrededor: no es la "
+                               f"meta, sigo buscando")
+                self.bandera, self._barrido_meta, self._meta = None, False, None
+                self.marcas.pop("bandera", None)
+                return 0.0, 0.0
             self._elegir_candidata(now)                             # ranking -> ACERCAR; si no vio nada: fila
             if self.estado == IDA:
                 if self._empezar_fila(now):

@@ -58,7 +58,7 @@ def test_bandera_del_laboratorio_se_detecta_y_qr_texto_no():
     hoja = mundos.textura_bandera(rng)
     for ancho in (45, 60, 90, 115):        # 115 px ~ 0.9 m (donde se para a mirar); mas cerca no hace falta
         alto = int(ancho * hoja.shape[0] / hoja.shape[1])
-        fondo = np.full((250, 250, 3), 150, np.uint8)
+        fondo = np.full((250, 250, 3), mundos.CARTON, np.uint8)              # hoja pegada en una caja
         fondo[40:40 + alto, 30:30 + ancho] = cv2.resize(hoja, (ancho, alto), interpolation=cv2.INTER_AREA)
         assert det(cv2.GaussianBlur(fondo, (3, 3), 0.7)), ancho
     # QR y texto: no
@@ -73,3 +73,14 @@ def test_bandera_del_laboratorio_se_detecta_y_qr_texto_no():
         fondo[80:140, 30:220] = 235
         cv2.putText(fondo, txt, (35, 125), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 0), 3, cv2.LINE_AA)
         assert det(cv2.GaussianBlur(fondo, (3, 3), 0.7)) == [], txt
+
+
+def test_bandera_sin_carton_alrededor_no_cuenta():
+    """(22/11) la bandera de verdad es una hoja blanca sobre carton: la misma hoja sobre una pared gris no cuenta."""
+    det = DetectorBandera()
+    hoja = mundos.textura_bandera(np.random.default_rng(2))
+    alto = int(80 * hoja.shape[0] / hoja.shape[1])
+    for fondo_col, esperado in ((mundos.CARTON, True), ((150, 150, 150), False), ((200, 200, 200), False)):
+        fondo = np.full((250, 250, 3), fondo_col, np.uint8)
+        fondo[60:60 + alto, 60:140] = cv2.resize(hoja, (80, alto), interpolation=cv2.INTER_AREA)
+        assert bool(det(cv2.GaussianBlur(fondo, (3, 3), 0.7))) is esperado, fondo_col
