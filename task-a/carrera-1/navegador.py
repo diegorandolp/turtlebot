@@ -112,6 +112,9 @@ class Config:
     # --- la meta del 21/11: bandera a cuadros al fondo del tubo, 4 fotos en los costados (2 y 2) ---
     qr_desde_mejor: bool = False    # leer el QR volviendo a donde mejor se vio la foto (22/11: en el sim salio PEOR que
                                     # ponerse de frente a 0.65 m: 2 de 16 sin QR; apagado, 16/16)
+    barrido_hd: bool = False        # la vuelta de la meta con fotos HD (campo de 69 grados y caras ~3 veces mas grandes:
+    barrido_meta_hd: tuple = (50.0, 115.0, -115.0, -50.0)   # 4 paradas en vez de 6, y se reconoce y lee el QR desde ahi)
+    mirar_meta_max_hd: float = 9.0  # s maximos por parada esperando la foto HD (~4 s en la Pi)
     d_meta2: float = 1.4            # m del fondo de la SEGUNDA vuelta (si la primera no encontro las 4 fotos)
     d_meta: float = 0.65            # m del fondo a los que se para a mirar los costados (21/11: con 0.9 quedaba lejos) (desde ahi una foto a 0.5 m
                                     # de la pared de al lado mide ~33 px; a 1 m del punto, ~17 px: se ve, se vota poco)
@@ -403,7 +406,7 @@ class Carrera:
     def quiere_hd(self):
         """Pedir fotos HD para el QR: solo frente a la foto y si la preview no alcanzo en qr_preview_s (en la
         Raspberry cada foto HD tarda ~4 s: pedirla al acercarse, como antes, frenaba todo)."""
-        if self.confirmando_hd:
+        if self.confirmando_hd or self._barriendo_hd:
             return True
         f = self._qr
         espera = 0.0 if self.cfg.confirmar_hd else self.cfg.qr_preview_s     # (meta: la preview no alcanza, HD ya)
@@ -421,8 +424,21 @@ class Carrera:
     @property
     def quiere_qr(self):
         """La camara debe buscar QR (cuesta: solo cerca de la meta)."""
-        return bool(self.cfg.buscar and self.cfg.leer_qr and self.palabra is None
-                    and self.estado in (ACERCAR, RECONOCER, LEER_QR))
+        if not (self.cfg.buscar and self.cfg.leer_qr and self.palabra is None):
+            return False
+        if self._barriendo_hd:
+            return True                                     # la foto HD de la vuelta: de paso, su QR
+        if (self.cfg.confirmar_hd and self.estado in (ACERCAR, RECONOCER) and self.obj is not None
+                and self.obj.por_ranking and self.obj.estado != "objetivo" and not self.confirmando_hd):
+            return False        # yendo a confirmar una foto por ranking: en la preview el QR solo cuesta (~300 ms
+                                # por foto en la Pi, la mitad de las fotos por segundo); se lee con la HD
+        return self.estado in (ACERCAR, RECONOCER, LEER_QR)
+
+    @property
+    def _barriendo_hd(self):
+        m = self._meta
+        return bool(self.cfg.barrido_hd and self.estado == META and m is not None and m["fase"] == "girar"
+                    and m["mirando_desde"] is not None)
 
     def _p_buscada(self, c):
         """Probabilidad (votacion de la candidata) de que sea la persona buscada."""
@@ -1188,7 +1204,7 @@ class Carrera:
             self._empezar_meta(now, self.cfg.d_meta2)
             return True
         fotos = [c for c in self.candidatas if c.xy is not None and c.vot.n >= 1 and not c.descartada
-                 and self._en_meta(c.xy)]
+                 and c.estado != "otra" and self._en_meta(c.xy)]
         if not fotos:
             return False
         c = max(fotos, key=self._p_buscada)
@@ -1233,7 +1249,8 @@ class Carrera:
         if rs is not None and rq < 4.0 and rs < rq - 0.15:
             q = np.asarray(b["xy"], float) + max(0.5, d_meta - 0.3) * n   # detras de algo: mas cerca
         base = math.atan2(-n[1], -n[0])                             # mirando al fondo
-        rumbos = [wrap(base + math.radians(g)) for g in self.cfg.barrido_meta]   # (wrap: el giro va por el lado corto,
+        rumbos = [wrap(base + math.radians(g))
+                  for g in (self.cfg.barrido_meta_hd if self.cfg.barrido_hd else self.cfg.barrido_meta)]   # (wrap: el giro va por el lado corto,
                                                                                   # paso a paso de 45 en el mismo sentido)
         self._meta = dict(punto=(float(q[0]), float(q[1])), rumbos=rumbos, fase="ir", t_ini=now, t_punto=now,
                           mirando_desde=None, base=base)
@@ -1301,7 +1318,10 @@ class Carrera:
         # quieto hasta tener 2 fotos tomadas ya parado (la Pi tarda ~0.5 s en entregar cada una), minimo
         # mirar_meta_s y maximo mirar_meta_max
         quieto = now - m["mirando_desde"]
-        if quieto < self.cfg.mirar_meta_s or (quieto < self.cfg.mirar_meta_max and self._fotos - m["fotos0"] < 3):
+        if self.cfg.barrido_hd:                                   # 2 fotos: la que venia en camino y la HD ya parado
+            if quieto < self.cfg.mirar_meta_max_hd and self._fotos - m["fotos0"] < 2:
+                return 0.0, 0.0
+        elif quieto < self.cfg.mirar_meta_s or (quieto < self.cfg.mirar_meta_max and self._fotos - m["fotos0"] < 3):
             return 0.0, 0.0
         m["rumbos"].pop(0)
         vistas = [c for c in self.candidatas if c.xy is not None and c.vot.n >= 2 and self._en_meta(c.xy)]

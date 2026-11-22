@@ -131,7 +131,7 @@ class Percepcion:
                 rumbo, d, xy = self._ubicar(u, W, b.ancho, self.bandera_m, pose, scan, dth, rango=(0.4, 2.5))
                 banderas.append(Obs("bandera", t, rumbo, d, xy, b.ancho, b.caja, girando=girando, carton=b.carton))
         # frente a la meta (leer_qr) las flechas ya no se usan: en una foto HD buscarlas es puro costo en la Pi
-        for f in ([] if (leer_qr and W > 400) else self.det_fl(img)[:4]):
+        for f in ([] if W > 400 else self.det_fl(img)[:4]):     # (las HD solo se piden en la meta: ahi no hay flechas)
             u, v = f.centro
             if any(x - 1.6 * w <= u <= x + 2.6 * w and y - 0.8 * h <= v <= y + 4.0 * h for x, y, w, h in cajas):
                 continue                                  # dentro de la hoja de una foto (ojos, ropa, el QR): no es flecha
@@ -265,7 +265,7 @@ class CamaraHilo:
     def __init__(self, robot, percepcion, sensores, hd=False):
         self.robot, self.per, self.sensores, self.hd = robot, percepcion, sensores, hd
         self.qr = False                     # buscar QR en cada foto (frente a la meta)
-        self.hd_qr = False                  # ...y pedirlas en HD mientras tanto (el QR se lee de mas lejos)
+        self.hd_qr = False                  # pedir las fotos en HD (lo decide el navegador: QR, confirmar, vuelta)
         self.hd_falla = 0                   # pedidos HD seguidos que fallaron: desde 2, se usa la preview
         self.solo_ver = False               # True = fotos solo para la ventana/video (la vuelta): sin procesar
         self.lock = threading.Lock()
@@ -290,7 +290,7 @@ class CamaraHilo:
                 continue
             (pose, scan, th_scan, w), t = self.sensores(), time.monotonic()
             try:
-                hd = (self.hd or (self.qr and self.hd_qr)) and self.hd_falla < 2
+                hd = (self.hd or self.hd_qr) and self.hd_falla < 2
                 t_pedir = time.monotonic()
                 try:
                     img = self.robot.photo(timeout=2.0, hd=True) if hd else self.robot.photo(timeout=2.0)

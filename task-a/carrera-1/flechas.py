@@ -235,11 +235,8 @@ class Banco:
             if recta:
                 P[ARRIBA].append(cv2.rotate(m, cv2.ROTATE_90_COUNTERCLOCKWISE))
                 P[ABAJO].append(cv2.rotate(m, cv2.ROTATE_90_CLOCKWISE))
-            else:
-                # flecha de giro DERECHA pegada al reves (22/11: la del laboratorio estaba girada 180 grados, como
-                # una "J"): la punta queda a la izquierda -> izq. (La izquierda girada 180 no se agrego: con ella el
-                # croquis del simulador veia flechas falsas)
-                P[IZQ].append(cv2.rotate(m, cv2.ROTATE_180))
+            # (22/11: se probo aceptar la flecha de giro pegada girada 180 grados, la "J" del laboratorio; hacia
+            # leer mal otras senales (el croquis del simulador dejo de pasar). Las senales se pegan derechas)
         self.dirs = list(P)
         self.M = {d: np.array([_vec(normalizar(m)) for m in ms]) for d, ms in P.items()}
         self.neg = np.array([_vec(normalizar(m)) for m in banco_negativo()])

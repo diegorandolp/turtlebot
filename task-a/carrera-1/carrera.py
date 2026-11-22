@@ -328,6 +328,7 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
     if sim and mundo is not None and not any(getattr(k, "tipo", "") == "bandera" for k in mundo.carteles):
         nav.cfg.exigir_bandera = False                                   # mundo viejo sin bandera
     nav.cfg.confirmar_hd = nav.cfg.exigir_bandera                        # meta del 21/11: confirmar con HD
+    nav.cfg.barrido_hd = nav.cfg.exigir_bandera and getattr(args, "barrido_hd", False)
     if args.traza:
         nav.traza = []                                                   # (t, estado, x, y, yaw, h_pref, phi, v, w)
     reloj = (lambda: robot.time) if sim else time.monotonic
@@ -388,7 +389,7 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
             leer_qr = nav.quiere_qr                                      # frente a la meta: buscar QR (y en HD)
             if sim:
                 if (buscar or ver) and now >= t_cam:
-                    hd = args.hd or (leer_qr and nav.quiere_hd and not args.qr_sin_hd)
+                    hd = args.hd or (nav.quiere_hd and not args.qr_sin_hd)
                     img = robot.photo(hd=hd)
                     if ver:
                         caras, flechas, qrs = [], [], []
@@ -569,6 +570,8 @@ def parse(argv=None):
     ap.add_argument("--n-fotos", type=int, default=4, metavar="N",
                     help="con --buscar: cuantas fotos hay en la meta (21/11: 4, dos en cada costado). Vistas las N, "
                          "va a la mas parecida a la buscada sin dar mas vueltas (0 = no se sabe)")
+    ap.add_argument("--barrido-hd", action="store_true",
+                    help="(experimental) la vuelta de la meta con fotos HD: 4 paradas, reconoce y lee el QR desde el centro")
     ap.add_argument("--sin-bandera", action="store_true",
                     help="no buscar la bandera a cuadros de la meta (la busqueda del tubo de antes: fila por las paredes)")
     ap.add_argument("--d-meta", type=float, default=None,
