@@ -41,6 +41,7 @@ class Obs:
     girando: bool = False       # foto tomada girando rapido: el rumbo y la distancia son poco fiables
     texto: str = ""             # QR: lo que dice
     cara: object = None         # QR: la Obs de la cara (de la misma foto) a la que pertenece, o None
+    carton: float = 1.0         # bandera: cuanto del borde de su hoja es carton (confianza)
     z: float = 0.0              # caras: altura estimada del centro de la cara sobre el piso (m; camara a 13 cm)
 
 
@@ -128,7 +129,7 @@ class Percepcion:
             for b in self.det_band(img)[:1]:
                 u, v = b.centro
                 rumbo, d, xy = self._ubicar(u, W, b.ancho, self.bandera_m, pose, scan, dth, rango=(0.4, 2.5))
-                banderas.append(Obs("bandera", t, rumbo, d, xy, b.ancho, b.caja, girando=girando))
+                banderas.append(Obs("bandera", t, rumbo, d, xy, b.ancho, b.caja, girando=girando, carton=b.carton))
         # frente a la meta (leer_qr) las flechas ya no se usan: en una foto HD buscarlas es puro costo en la Pi
         for f in ([] if (leer_qr and W > 400) else self.det_fl(img)[:4]):
             u, v = f.centro

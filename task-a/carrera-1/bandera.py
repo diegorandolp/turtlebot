@@ -34,6 +34,7 @@ class Bandera:
     caja: tuple             # (x, y, w, h) en px de la imagen: la caja de todos los cuadros
     n: int                  # cuadritos encontrados
     score: float            # 0..1: cuan parejos son los cuadros (1 = todos del mismo tamano)
+    carton: float = 1.0     # 0..1: cuanto del borde de la hoja es carton (la de verdad va sobre una caja)
 
     @property
     def centro(self):
@@ -46,7 +47,7 @@ class Bandera:
 
 
 class DetectorBandera:
-    def __init__(self, min_lado=3, sobre_carton=True, min_carton=0.35):
+    def __init__(self, min_lado=3, sobre_carton=False, min_carton=0.35):
         self.min_lado = min_lado
         self.sobre_carton = sobre_carton    # (22/11) la de verdad es una hoja blanca pegada en una caja de carton
         self.min_carton = min_carton
@@ -187,8 +188,11 @@ class DetectorBandera:
                     continue
                 vistas.append((x, y, w, h))
                 out.append(Bandera((x, y, w, h), int(round((n_f + 1) / 2)), float(np.clip(1.0 - cv, 0.0, 1.0))))
-        if self.sobre_carton and img.ndim == 3:
-            out = [b for b in out if self.carton_alrededor(img, b.caja) >= self.min_carton]
+        if img.ndim == 3:                                   # confianza, no requisito (sobre_carton=True: requisito)
+            for b in out:
+                b.carton = self.carton_alrededor(img, b.caja)
+            if self.sobre_carton:
+                out = [b for b in out if b.carton >= self.min_carton]
         out.sort(key=lambda b: -(b.n * b.score))
         return out
 

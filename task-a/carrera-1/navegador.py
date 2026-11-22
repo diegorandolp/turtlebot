@@ -110,6 +110,9 @@ class Config:
     p_descartar: float = 0.6        # ...y se DESCARTA solo si otra persona gana con p >= esto; si de cerca no se sabe
                                     # quien es (p chicas), queda "dudosa" y se revisan primero las demas
     # --- la meta del 21/11: bandera a cuadros al fondo del tubo, 4 fotos en los costados (2 y 2) ---
+    qr_desde_mejor: bool = False    # leer el QR volviendo a donde mejor se vio la foto (22/11: en el sim salio PEOR que
+                                    # ponerse de frente a 0.65 m: 2 de 16 sin QR; apagado, 16/16)
+    d_meta2: float = 1.4            # m del fondo de la SEGUNDA vuelta (si la primera no encontro las 4 fotos)
     d_meta: float = 0.65            # m del fondo a los que se para a mirar los costados (21/11: con 0.9 quedaba lejos) (desde ahi una foto a 0.5 m
                                     # de la pared de al lado mide ~33 px; a 1 m del punto, ~17 px: se ve, se vota poco)
     barrido_meta: tuple = (45.0, 90.0, 135.0, -135.0, -90.0, -45.0)   # grados respecto a la bandera, en orden: un
@@ -1048,7 +1051,15 @@ class Carrera:
         if f["paso"] >= 0:
             self._prog = None                                      # quieto mirando: no es estar atascado
         if f["paso"] == -1:                                        # ponerse de frente
-            mp = self.obj.mejor_pose if self.cfg.exigir_bandera else None
+            mp = self.obj.mejor_pose if (self.cfg.exigir_bandera and self.cfg.qr_desde_mejor) else None
+            if mp is not None:
+                # solo si desde ahi se la ve DE FRENTE (< 30 grados de la normal de su pared) y a 0.4-0.9 m: de refilon
+                # o de muy cerca el QR no se lee (sim 22/11: "leo el QR desde aqui" y 30 s sin leerlo)
+                n = self._normal_pared(self.obj.xy)
+                v = np.array([mp[0] - self.obj.xy[0], mp[1] - self.obj.xy[1]], float)
+                dv = float(np.linalg.norm(v))
+                if not (0.4 <= dv <= 0.9 and float(n @ v) / max(dv, 1e-6) > math.cos(math.radians(30))):
+                    mp = None
             if mp is not None and "frente" not in f:
                 # (22/11) volver a donde mejor se la vio (y ya cerca: quedarse) en vez de buscar el frente por el mapa
                 if math.hypot(mp[0] - x, mp[1] - y) < 0.25:
@@ -1146,9 +1157,12 @@ class Carrera:
             b = self.bandera = dict(xy=np.array(o.xy, float), n=0, t=now, pos=[])
         b["pos"] = (b["pos"] + [tuple(o.xy)])[-7:]
         b["xy"] = np.median(np.array(b["pos"], float), axis=0)
-        b["n"] += 1
+        antes = b["n"]
+        # (22/11) confianza: hoja sobre carton (como la pone el profe) = 1 vista; sobre otra cosa, media vista (hacen
+        # falta 4 para confirmarla). No es requisito: si la pegan sobre otra cosa igual se encuentra, algo mas tarde
+        b["n"] += 1.0 if getattr(o, "carton", 1.0) >= 0.35 else 0.5
         b["t"] = now
-        if b["n"] == 2:
+        if antes < 2 <= b["n"]:
             self.nota(now, f"bandera de la meta confirmada en ({b['xy'][0]:.2f}, {b['xy'][1]:.2f}) a {o.dist:.1f} m")
             self.marca(now, "bandera")
         if (b["n"] >= 2 and self.estado in (IDA, EXPLORAR, FILA) and not self._barrido_meta
@@ -1169,8 +1183,9 @@ class Carrera:
             for c in self.candidatas:                               # las dudosas se pueden volver a revisar
                 if not c.descartada:
                     c.revisiones = 0
-            self.nota(now, "no queda foto por revisar en la meta: otra vuelta desde el centro (no salgo a explorar)")
-            self._empezar_meta(now)
+            self.nota(now, f"no queda foto por revisar en la meta: otra vuelta, ahora a {self.cfg.d_meta2:.1f} m del "
+                           f"fondo (en un tubo largo las fotos quedan mas atras; no salgo a explorar)")
+            self._empezar_meta(now, self.cfg.d_meta2)
             return True
         fotos = [c for c in self.candidatas if c.xy is not None and c.vot.n >= 1 and not c.descartada
                  and self._en_meta(c.xy)]
@@ -1209,13 +1224,14 @@ class Carrera:
             return q                                                # no cabe (o no es el tubo)
         return q + u * (li - ld) / 2.0
 
-    def _empezar_meta(self, now):
+    def _empezar_meta(self, now, d_meta=None):
         b = self.bandera
+        d_meta = self.cfg.d_meta if d_meta is None else d_meta
         n = self._normal_pared(b["xy"])                             # de la pared del fondo hacia el tubo
-        q = self._centro_tubo(np.asarray(b["xy"], float) + self.cfg.d_meta * n, n)
+        q = self._centro_tubo(np.asarray(b["xy"], float) + d_meta * n, n)
         rq, rs = self._rango_scan(q)
         if rs is not None and rq < 4.0 and rs < rq - 0.15:
-            q = np.asarray(b["xy"], float) + max(0.5, self.cfg.d_meta - 0.3) * n   # detras de algo: mas cerca
+            q = np.asarray(b["xy"], float) + max(0.5, d_meta - 0.3) * n   # detras de algo: mas cerca
         base = math.atan2(-n[1], -n[0])                             # mirando al fondo
         rumbos = [wrap(base + math.radians(g)) for g in self.cfg.barrido_meta]   # (wrap: el giro va por el lado corto,
                                                                                   # paso a paso de 45 en el mismo sentido)
@@ -1227,7 +1243,7 @@ class Carrera:
         self._reset_ruta()
         x, y = self._pos[:2]
         self.nota(now, f"META: voy al centro del tubo frente a la bandera ({q[0]:.2f}, {q[1]:.2f}), a "
-                       f"{self.cfg.d_meta:.1f} m del fondo y {math.hypot(q[0] - x, q[1] - y):.1f} m de aqui; "
+                       f"{d_meta:.1f} m del fondo y {math.hypot(q[0] - x, q[1] - y):.1f} m de aqui; "
                        f"ahi doy una vuelta lenta ({len(rumbos)} paradas)")
 
     def _meta_paso(self, now, pos, mapa):

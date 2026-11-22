@@ -77,7 +77,7 @@ def test_bandera_del_laboratorio_se_detecta_y_qr_texto_no():
 
 def test_bandera_sin_carton_alrededor_no_cuenta():
     """(22/11) la bandera de verdad es una hoja blanca sobre carton: la misma hoja sobre una pared gris no cuenta."""
-    det = DetectorBandera()
+    det = DetectorBandera(sobre_carton=True)                            # como requisito (en la carrera es confianza)
     hoja = mundos.textura_bandera(np.random.default_rng(2))
     alto = int(80 * hoja.shape[0] / hoja.shape[1])
     for fondo_col, esperado in ((mundos.CARTON, True), ((150, 150, 150), False), ((200, 200, 200), False)):
