@@ -37,6 +37,7 @@ class Flecha:
     caja: tuple             # (x, y, w, h) en px de la imagen
     score: float            # parecido con la mejor plantilla (correlacion, -1..1)
     margen: float           # ventaja sobre la direccion opuesta
+    color: str = ""         # "" = tinta sobre papel (blanco y negro); "azul" = flecha negra sobre disco azul
 
     @property
     def centro(self):
@@ -234,6 +235,8 @@ class Banco:
             if recta:
                 P[ARRIBA].append(cv2.rotate(m, cv2.ROTATE_90_COUNTERCLOCKWISE))
                 P[ABAJO].append(cv2.rotate(m, cv2.ROTATE_90_CLOCKWISE))
+            # (22/11: se probo aceptar la flecha de giro pegada girada 180 grados, la "J" del laboratorio; hacia
+            # leer mal otras senales (el croquis del simulador dejo de pasar). Las senales se pegan derechas)
         self.dirs = list(P)
         self.M = {d: np.array([_vec(normalizar(m)) for m in ms]) for d, ms in P.items()}
         self.neg = np.array([_vec(normalizar(m)) for m in banco_negativo()])
@@ -244,12 +247,109 @@ class Banco:
         return {d: float((M @ v).max()) for d, M in self.M.items()}, float((self.neg @ v).max())
 
 
+# ---------------------------------------------------------------- discos de color (senales del 21/11)
+
+AZUL, ROJO = "azul", "rojo"
+
+
+def mascara_color(hsv, color):
+    """Pixeles de un color fuerte: azul (H 95-130) o rojo (H < 10 o > 168), S y V altos."""
+    h, s, v = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+    if color == AZUL:
+        m = (h >= 95) & (h <= 130)
+    else:
+        m = (h <= 10) | (h >= 168)
+    return (m & (s >= 90) & (v >= 50)).astype(np.uint8) * 255
+
+
+class DetectorDiscos:
+    """Senales de la competencia (21/11): disco AZUL con flecha negra (ida), disco ROJO con flecha negra
+    (vuelta: se ignora), discos lisos (sin nada: se ignoran). Busca manchas azules/rojas redondas y, adentro,
+    una mancha oscura con forma de flecha (misma clasificacion por plantillas que las de papel). La senal de
+    prohibido (aro negro con barra, sobre papel) no es un disco de color y la descarta DetectorFlechas."""
+
+    def __init__(self, banco, umbral=0.62, margen=0.10, margen_neg=0.04, min_lado=10, max_frac=0.7):
+        self.banco = banco
+        self.umbral, self.margen, self.margen_neg = umbral, margen, margen_neg
+        self.min_lado, self.max_frac = min_lado, max_frac
+
+    def discos(self, img, color):
+        """-> lista de (caja, mascara del disco en la caja) de manchas redondas de ese color."""
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        m = mascara_color(hsv, color)
+        m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+        H, W = m.shape
+        n, lab, st, cen = cv2.connectedComponentsWithStats(m, connectivity=8)
+        out = []
+        for i in range(1, n):
+            x, y, w, h, area = st[i]
+            lado = max(w, h)
+            if lado < self.min_lado or lado > self.max_frac * min(H, W):
+                continue
+            if x <= 0 or y <= 0 or x + w >= W or y + h >= H:
+                continue                                        # cortado por el borde
+            if not (0.55 <= w / h <= 1.8):                       # redondo (de costado, una elipse)
+                continue
+            comp = (lab[y:y + h, x:x + w] == i)
+            # un disco (con o sin flecha adentro) llena bien su caja: la flecha quita como mucho un 30 %
+            if not (0.45 <= area / float(w * h) <= 0.85):
+                continue
+            # lleno hasta el borde de forma convexa: el casco convexo casi igual al disco con su flecha
+            pts = np.column_stack(np.nonzero(comp)[::-1]).astype(np.int32)
+            casco = np.zeros((h, w), np.uint8)
+            cv2.fillConvexPoly(casco, cv2.convexHull(pts), 255)
+            if (casco > 0).mean() < 0.62 or area < 0.55 * (casco > 0).sum():
+                continue                                        # ni redondo ni (casi) lleno
+            out.append(((int(x), int(y), int(w), int(h)), comp, hsv[y:y + h, x:x + w, 2]))
+        return out
+
+    def interior(self, comp, V):
+        """Mancha oscura dentro del disco (la flecha): pixeles bastante mas oscuros que el disco, lejos del borde
+        (el aro negro de afuera y su desenfoque no cuentan). Una flecha fina desenfocada se mezcla con el azul
+        (queda azul oscuro): por eso el umbral es relativo al brillo del disco y no muy exigente."""
+        h, w = comp.shape
+        lado = max(w, h)
+        pts = np.column_stack(np.nonzero(comp)[::-1]).astype(np.int32)
+        casco = np.zeros((h, w), np.uint8)
+        cv2.fillConvexPoly(casco, cv2.convexHull(pts), 255)    # el disco entero, con la flecha tapada
+        dist = cv2.distanceTransform(casco, cv2.DIST_L2, 3)
+        adentro = dist >= max(2.0, 0.07 * lado)
+        v_disco = float(np.median(V[comp])) if comp.any() else 255.0
+        oscuro = adentro & (V < 0.72 * v_disco)
+        oscuro = oscuro.astype(np.uint8) * 255
+        if lado >= 30:
+            oscuro = cv2.morphologyEx(oscuro, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
+        n, lab, st, _ = cv2.connectedComponentsWithStats(oscuro, connectivity=8)
+        if n <= 1:
+            return None
+        i = 1 + int(np.argmax(st[1:, 4]))
+        if st[i, 4] < 0.04 * adentro.sum() or st[i, 4] < 10:
+            return None                                         # disco liso (o solo ruido)
+        return (lab == i).astype(np.uint8) * 255
+
+    def __call__(self, img, color=AZUL):
+        """-> lista de Flecha (color=color) de los discos de ese color con una flecha adentro."""
+        out = []
+        for caja, comp, V in self.discos(img, color):
+            inter = self.interior(comp, V)
+            if inter is None:
+                continue
+            s, neg = self.banco.puntajes(normalizar(inter))
+            d = max(s, key=s.get)
+            sc, mg = s[d], s[d] - s[OPUESTA[d]]
+            if sc >= self.umbral and mg >= self.margen and sc >= neg + self.margen_neg:
+                out.append(Flecha(d, caja, sc, mg, color=color))
+        return out
+
+
 # ---------------------------------------------------------------- detector
 
 class DetectorFlechas:
     def __init__(self, umbral=0.68, margen=0.10, margen_neg=0.04, min_lado=9, max_frac=0.7, contraste=0.72,
-                 color=False, forma=False):
-        """color=True acepta tambien flechas de color sobre papel blanco (mas falsos positivos con
+                 color=False, forma=False, discos=True):
+        """discos=True (defecto): ademas, flechas negras sobre DISCO AZUL (senales de la competencia, 21/11);
+        las de disco rojo y los discos lisos se ignoran (ver DetectorDiscos).
+        color=True acepta tambien flechas de color sobre papel blanco (mas falsos positivos con
         objetos de colores del fondo; usar solo si las flechas del circuito son de color).
         forma=True: SOLO LA FORMA cuenta, sin importar el color de la tinta: la imagen pasa a gris con el
         canal minimo min(B, G, R), donde una flecha azul, roja o verde sobre papel blanco queda oscura como
@@ -259,6 +359,7 @@ class DetectorFlechas:
         self.banco = Banco()
         self.color = color
         self.forma = forma
+        self.discos = DetectorDiscos(self.banco, min_lado=min_lado + 1) if discos else None
         self.umbral, self.margen, self.margen_neg = umbral, margen, margen_neg
         self.min_lado, self.max_frac = min_lado, max_frac
         self.contraste = contraste            # tinta / papel: la tinta debe tener < 72 % del brillo del papel
@@ -358,10 +459,12 @@ class DetectorFlechas:
         return d, s[d], s[d] - s[OPUESTA[d]], neg
 
     def __call__(self, img):
+        out = []
+        if self.discos is not None and img.ndim == 3:
+            out += self.discos(img, AZUL)                      # (las rojas y los discos lisos no cuentan)
         if self.forma and img.ndim == 3:
             mn = img.min(axis=2)
             img = cv2.merge([mn, mn, mn])
-        out = []
         for caja, comp in self.candidatos(img):
             c = self.clasificar(comp)
             if c is None:

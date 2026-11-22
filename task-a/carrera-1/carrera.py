@@ -97,8 +97,10 @@ def nombre_en_galeria(nombre, nombres):
 def armar(args, excluir=()):
     rec = Reconocedor(args.modelo, excluir=excluir, espejo=getattr(args, "espejo", False))
     forma = not args.flechas_solo_negras                                 # las senales del lab pueden ser de color
+    from bandera import DetectorBandera
     per = Percepcion(rec, DetectorFlechas(color=args.flechas_color, forma=forma), hfov=args.hfov, hfov_hd=args.hfov_hd,
-                     max_caras=6 if args.buscar else 3)
+                     max_caras=6 if args.buscar else 3,
+                     det_bandera=DetectorBandera() if (args.buscar and not args.sin_bandera) else None)
     engine = make_engine(args.engine, size_m=MAP_M, pixels=MAP_PX)
     pl = Planner(MAP_M, MAP_PX, cell=2, robot_radius=0.17, margin=0.05)
     frontal = args.mirada_desde is not None or not args.cobertura_simple
@@ -114,7 +116,9 @@ def armar(args, excluir=()):
     vuelta = 0.45 if getattr(args, "turbo", False) else min(max(0.31, args.vel), args.vel + 0.02)
     cfg = Config(vmax=args.vel, vmax_vuelta=vuelta, temprano=args.temprano,
                  usar_flechas=not args.sin_flechas, buscar=buscar, leer_qr=not args.sin_qr,
-                 n_fotos=getattr(args, "n_fotos", 0) or 0)
+                 n_fotos=getattr(args, "n_fotos", 0) or 0,
+                 exigir_bandera=bool(buscar) and not getattr(args, "sin_bandera", False),
+                 **({"d_meta": args.d_meta} if getattr(args, "d_meta", None) else {}))
     pl_fino = Planner(MAP_M, MAP_PX, cell=2, robot_radius=0.10, margin=0.0)
     nav = Carrera(cfg, pl, vot, Objetivo(vot), Senales(min_n=2), exp, planner_fino=pl_fino)
     if args.mirada_desde is not None:
@@ -321,6 +325,10 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
         if mundo.rostros and not args.buscar:
             args.buscar = mundo.persona                                  # simulador: buscar a la del mundo
     rec, per, engine, nav, cov = armar(args, excluir)
+    if sim and mundo is not None and not any(getattr(k, "tipo", "") == "bandera" for k in mundo.carteles):
+        nav.cfg.exigir_bandera = False                                   # mundo viejo sin bandera
+    nav.cfg.confirmar_hd = nav.cfg.exigir_bandera                        # meta del 21/11: confirmar con HD
+    nav.cfg.barrido_hd = nav.cfg.exigir_bandera and getattr(args, "barrido_hd", False)
     if args.traza:
         nav.traza = []                                                   # (t, estado, x, y, yaw, h_pref, phi, v, w)
     reloj = (lambda: robot.time) if sim else time.monotonic
@@ -381,7 +389,7 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
             leer_qr = nav.quiere_qr                                      # frente a la meta: buscar QR (y en HD)
             if sim:
                 if (buscar or ver) and now >= t_cam:
-                    hd = args.hd or (leer_qr and nav.quiere_hd and not args.qr_sin_hd)
+                    hd = args.hd or (nav.quiere_hd and not args.qr_sin_hd)
                     img = robot.photo(hd=hd)
                     if ver:
                         caras, flechas, qrs = [], [], []
@@ -406,7 +414,10 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
                 for o in caras:
                     nav.ver_cara(now, o, peso_por_tamano(o.px))
                 for o in flechas:
-                    nav.ver_flecha(now, o)
+                    if o.tipo == "bandera":
+                        nav.ver_bandera(now, o)
+                    else:
+                        nav.ver_flecha(now, o)
                 for o in qrs:
                     nav.ver_qr(now, o)
                 if nav.palabra and nav.qr_vista is None:                 # la foto del QR leido, para la ventana
@@ -515,7 +526,10 @@ def correr(robot, args, sim=False, gui=True, mundo=None, max_t=300.0, dt=0.05):
                palabra=nav.palabra, qrs_leidos=len(nav.qr_de), fotos_meta=len(nav.candidatas),
                tiempo=round((nav.t_fin or reloj()) - t_ini, 2),
                tiempo_b=round(nav.t_b - t_ini, 2) if nav.t_b else None, fotos=fotos, tiempos_camara=tiempos_cam,
-               flechas=[(s.dir(), s.n, s.usada) for s in nav.sen.lista], log=nav.log)
+               flechas=[(s.dir(), s.n, s.usada) for s in nav.sen.lista], log=nav.log,
+               marcas=nav.marcas, descartes=nav.descartes,                      # hitos de la meta (21/11)
+               bandera=None if nav.bandera is None else [round(float(v), 2) for v in nav.bandera["xy"]],
+               candidatas=nav._resumen_candidatas())
     if grab is not None:
         res["video"] = str(ruta_video) if ruta_video else None
     if nav.traza is not None:
@@ -553,9 +567,15 @@ def parse(argv=None):
                     help="persona a buscar entre las fotos de la meta (como en datos/rostros, sin importar tildes); "
                          "lee el QR de su foto y anuncia la palabra. En el simulador con +K: la del mundo")
     ap.add_argument("--sin-qr", action="store_true", help="con --buscar: no leer el QR (anuncia el nombre)")
-    ap.add_argument("--n-fotos", type=int, default=0, metavar="N",
-                    help="con --buscar: cuantas fotos hay en la meta, si se sabe. Vistas las N, va a la mas parecida "
-                         "a la buscada sin dar mas vueltas (0 = no se sabe)")
+    ap.add_argument("--n-fotos", type=int, default=4, metavar="N",
+                    help="con --buscar: cuantas fotos hay en la meta (21/11: 4, dos en cada costado). Vistas las N, "
+                         "va a la mas parecida a la buscada sin dar mas vueltas (0 = no se sabe)")
+    ap.add_argument("--barrido-hd", action="store_true",
+                    help="(experimental) la vuelta de la meta con fotos HD: 4 paradas, reconoce y lee el QR desde el centro")
+    ap.add_argument("--sin-bandera", action="store_true",
+                    help="no buscar la bandera a cuadros de la meta (la busqueda del tubo de antes: fila por las paredes)")
+    ap.add_argument("--d-meta", type=float, default=None,
+                    help="m del fondo (la bandera) a los que se para a mirar los costados (defecto 0.9)")
     ap.add_argument("--qr-sin-hd", action="store_true",
                     help="no pedir fotos HD para leer el QR (con HD se lee desde ~1.4 m; sin HD, desde ~0.5 m)")
     ap.add_argument("--persona", default=None, help="(--sim) quien esta en la foto de B (defecto: al azar)")

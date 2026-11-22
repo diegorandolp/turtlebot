@@ -4,6 +4,7 @@ Percepcion por camara (Tarea A, carrera-1): de cada foto saca las caras y las fl
 ese rumbo: la foto y las senales estan pegadas a una superficie que el LiDAR ve).
 
   Percepcion.procesar(img, pose, scan, leer_qr=False) -> (caras, flechas, qrs)   listas de Obs
+               (con det_bandera, la bandera a cuadros de la meta va en `flechas` como Obs tipo "bandera")
   Objetivo     junta las caras vistas de UNA foto: donde esta y la votacion de quien es (con --buscar
                hay una por cada foto de la meta; ver navegador.Carrera.ver_cara)
   Senales      junta las flechas vistas: cada senal con su posicion y su sentido confirmado
@@ -17,13 +18,17 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+
+def wrap(a):
+    return (a + np.pi) % (2 * np.pi) - np.pi
+
 from flechas import ARRIBA, DER, IZQ
 from qr import buscar_qrs
 
 
 @dataclass
 class Obs:
-    tipo: str                   # "cara" | "flecha" | "qr"
+    tipo: str                   # "cara" | "flecha" | "qr" | "bandera" (la bandera a cuadros de la meta, 21/11)
     t: float                    # instante de la foto
     rumbo: float                # rad, + izquierda, respecto al frente del robot al tomar la foto
     dist: float                 # m hasta la superficie (LiDAR; si no hay lectura, por el tamano)
@@ -36,6 +41,8 @@ class Obs:
     girando: bool = False       # foto tomada girando rapido: el rumbo y la distancia son poco fiables
     texto: str = ""             # QR: lo que dice
     cara: object = None         # QR: la Obs de la cara (de la misma foto) a la que pertenece, o None
+    carton: float = 1.0         # bandera: cuanto del borde de su hoja es carton (confianza)
+    z: float = 0.0              # caras: altura estimada del centro de la cara sobre el piso (m; camara a 13 cm)
 
 
 def distancia_lidar(scan, rumbo, ancho=math.radians(2.5)):
@@ -49,10 +56,12 @@ def distancia_lidar(scan, rumbo, ancho=math.radians(2.5)):
 
 
 class Percepcion:
-    def __init__(self, reconocedor, det_flechas, hfov=42.0, min_px_reconocer=10, cara_m=0.11, flecha_m=0.14,
-                 hfov_hd=None, qr_m=0.10, max_caras=3):
+    def __init__(self, reconocedor, det_flechas, hfov=42.0, min_px_reconocer=10, cara_m=0.05, flecha_m=0.14,
+                 hfov_hd=None, qr_m=0.10, max_caras=3, det_bandera=None, bandera_m=0.297):
         self._t_completo = -1e9       # ultima vez que YuNet reviso la imagen entera (con cajas de la camara)
         self.rec, self.det_fl = reconocedor, det_flechas
+        self.det_band, self.bandera_m = det_bandera, bandera_m   # bandera.DetectorBandera (hoja A4 apaisada)
+        self.cam_z = 0.13                                    # m: altura de la camara (OAK-D en el TB4 Lite)
         self.hfov = math.radians(hfov)
         self.hfov_hd = math.radians(hfov_hd) if hfov_hd else self.hfov   # fotos HD (16:9): otro campo de vision
         self.qr_m = qr_m
@@ -99,21 +108,39 @@ class Percepcion:
             if c.score < 0.7:
                 continue
             u, _ = c.centro
-            # la cara de una foto puede medir de 4 a 15 cm: el tamano casi no sirve, manda el LiDAR. Si el LiDAR
-            # da menos, la foto no puede estar mas lejos (las cajas tapan igual a la camara, que va mas baja)
-            rumbo, d, xy = self._ubicar(u, W, c.ancho, self.cara_m, pose, scan, dth, rango=(0.12, 1.6))
+            # la cara de las fotos impresas mide ~5 cm (19/11). Manda el LiDAR mientras cuadre con el tamano
+            # (0.5-1.6 veces): si el LiDAR da mucho menos es que pego en una caja o en la pared de al lado y la
+            # foto esta mas lejos (21/11: "frente a la foto: 0.39 m, cara de 18 px" = en realidad a ~0.9 m)
+            rumbo, d, xy = self._ubicar(u, W, c.ancho, self.cara_m, pose, scan, dth, rango=(0.5, 1.6))
             # girando rapido la foto sale corrida (19/11): solo se ubica la cara, sin ArcFace (lo mas caro en la Pi)
             res = self.rec.resultado(img, c) if c.ancho >= self.min_px and abs(w) < 1.0 else None
+            # altura de la cara: las fotos van pegadas abajo (cara a 10-35 cm); una persona del laboratorio (sentada
+            # o de pie, al fondo) sale mucho mas alta (21/11: el robot fue a la cara de alguien sentado)
+            _, f_px = self._rumbo(u, W)
+            v_c = c.caja[1] + c.caja[3] / 2.0
+            z = self.cam_z + d * ((H - 1) / 2.0 - v_c) / f_px
             caras.append(Obs("cara", t, rumbo, d, xy, c.ancho, c.caja, res=res,
-                             borde_sup=c.caja[1] < 0.04 * H, girando=girando))
+                             borde_sup=c.caja[1] < 0.04 * H, girando=girando, z=float(z)))
         cajas = [o.caja for o in caras]
+        # la bandera a cuadros de la meta (21/11): en la pared del fondo del tubo. Solo en la preview (en la HD,
+        # frente a la foto, es puro costo) y no mientras se gira rapido (sale corrida)
+        banderas = []
+        if self.det_band is not None and W <= 400 and not leer_qr and abs(w) < 1.0:
+            for b in self.det_band(img)[:1]:
+                u, v = b.centro
+                rumbo, d, xy = self._ubicar(u, W, b.ancho, self.bandera_m, pose, scan, dth, rango=(0.4, 2.5))
+                banderas.append(Obs("bandera", t, rumbo, d, xy, b.ancho, b.caja, girando=girando, carton=b.carton))
         # frente a la meta (leer_qr) las flechas ya no se usan: en una foto HD buscarlas es puro costo en la Pi
-        for f in ([] if (leer_qr and W > 400) else self.det_fl(img)[:4]):
+        for f in ([] if W > 400 else self.det_fl(img)[:4]):     # (las HD solo se piden en la meta: ahi no hay flechas)
             u, v = f.centro
             if any(x - 1.6 * w <= u <= x + 2.6 * w and y - 0.8 * h <= v <= y + 4.0 * h for x, y, w, h in cajas):
                 continue                                  # dentro de la hoja de una foto (ojos, ropa, el QR): no es flecha
+            if any(x - 0.2 * w <= u <= x + 1.2 * w and y - 0.2 * h <= v <= y + 1.2 * h for x, y, w, h in
+                   (o.caja for o in banderas)):
+                continue                                  # un trozo de la bandera no es una flecha
             rumbo, d, xy = self._ubicar(u, W, f.lado, self.flecha_m, pose, scan, dth)
             flechas.append(Obs("flecha", t, rumbo, d, xy, f.lado, f.caja, dir=f.dir, girando=girando))
+        flechas += banderas
         qrs = []
         if leer_qr:                                       # sin cara al lado solo cuenta frente a la buscada (ver_qr)
             for q in buscar_qrs(img, cajas):
@@ -137,6 +164,7 @@ class Objetivo:
         self.t_ultima = -1e9
         self.ultima = None          # ultima Obs
         self.pose_ultima = None     # pose del robot en la ultima deteccion (para apuntar a la cara vista)
+        self.mejor_pose = None      # (x, y, rumbo hacia la foto) donde se la vio mas grande (22/11: volver ahi para el QR)
         self.ancho_max = 0.0
         self._pos = []              # posiciones recientes (sin las fotos tomadas girando)
         self._k = recientes
@@ -146,6 +174,7 @@ class Objetivo:
         self.por_ranking = False    # con --buscar: elegida como la buscada por ser la mas parecida (ver navegador)
         self.descartada = False     # con --buscar: se la miro de cerca y es otra persona
         self.intentos_frente = 0    # con --buscar: veces que se fue a mirarla de frente porque se la veia de costado
+        self.revisiones = 0         # con --buscar: veces que se la miro de cerca sin poder decir quien es (dudosa)
 
     def agregar(self, o, peso, pose=None):
         if not o.girando or self.xy is None:
@@ -155,7 +184,9 @@ class Objetivo:
         self.t_ultima = o.t
         self.ultima = o
         self.pose_ultima = pose
-        self.ancho_max = max(self.ancho_max, o.px)
+        if pose is not None and not o.girando and o.px >= self.ancho_max:
+            self.mejor_pose = (float(pose[0]), float(pose[1]), float(wrap(pose[2] + o.rumbo)))   # donde se la vio
+        self.ancho_max = max(self.ancho_max, o.px)                                           # mas grande, mirandola
         if o.res is not None:
             self.vot.agregar(o.res.sims, peso)
 
@@ -234,7 +265,7 @@ class CamaraHilo:
     def __init__(self, robot, percepcion, sensores, hd=False):
         self.robot, self.per, self.sensores, self.hd = robot, percepcion, sensores, hd
         self.qr = False                     # buscar QR en cada foto (frente a la meta)
-        self.hd_qr = False                  # ...y pedirlas en HD mientras tanto (el QR se lee de mas lejos)
+        self.hd_qr = False                  # pedir las fotos en HD (lo decide el navegador: QR, confirmar, vuelta)
         self.hd_falla = 0                   # pedidos HD seguidos que fallaron: desde 2, se usa la preview
         self.solo_ver = False               # True = fotos solo para la ventana/video (la vuelta): sin procesar
         self.lock = threading.Lock()
@@ -259,7 +290,7 @@ class CamaraHilo:
                 continue
             (pose, scan, th_scan, w), t = self.sensores(), time.monotonic()
             try:
-                hd = (self.hd or (self.qr and self.hd_qr)) and self.hd_falla < 2
+                hd = (self.hd or self.hd_qr) and self.hd_falla < 2
                 t_pedir = time.monotonic()
                 try:
                     img = self.robot.photo(timeout=2.0, hd=True) if hd else self.robot.photo(timeout=2.0)

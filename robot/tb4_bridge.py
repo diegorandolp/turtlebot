@@ -160,7 +160,19 @@ class Bridge(Node):
         now = time.monotonic()
         if now - self.last_log.get(key, 0.0) >= period:
             self.last_log[key] = now
-            getattr(self.get_logger(), level)(text)
+            # una linea de codigo por severidad: rclpy NO deja que la misma linea registre con severidades
+            # distintas (ValueError "Logger severity cannot be changed between calls"). El 21/11 eso mataba el
+            # hilo UDP y el puente dejaba de responder (control_carrera: "El puente no responde")
+            lg = self.get_logger()
+            try:
+                if level == "warn":
+                    lg.warning(text)
+                elif level == "error":
+                    lg.error(text)
+                else:
+                    lg.info(text)
+            except Exception:
+                print(f"[{level}] {text}", flush=True)
 
     def send(self, data, addr):
         try:
@@ -191,7 +203,10 @@ class Bridge(Node):
                 kind, payload = P.unpack(data, self.token)
                 self.on_packet(kind, payload, addr)
             except Exception as e:  # un paquete malo nunca tumba el hilo
-                self.log_every(("bad", addr[0]), 10.0, f"Paquete ignorado de {addr}: {e}", "warn")
+                try:
+                    self.log_every(("bad", addr[0]), 10.0, f"Paquete ignorado de {addr}: {e}", "warn")
+                except Exception:
+                    pass
 
     def on_packet(self, kind, payload, addr):
         now = time.monotonic()

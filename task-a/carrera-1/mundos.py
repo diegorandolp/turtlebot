@@ -207,6 +207,67 @@ def textura_flecha(direccion, rng, estilo=None, lado_m=0.22, color=(25, 25, 25),
     return tex
 
 
+# ---- senales de la competencia (21/11): discos azul/rojo con flecha, discos lisos, prohibido, bandera de meta
+AZUL_SENAL, ROJO_SENAL = (190, 100, 0), (0, 0, 230)                      # BGR como en el PDF del profe
+A4 = (0.297, 0.210)
+
+
+def textura_disco(direccion, rng, color="azul", flecha=True, lado_m=0.20):
+    """Hoja cuadrada blanca con un disco de color (aro negro) y, si `flecha`, una flecha negra de giro adentro
+    (como las senales del PDF del 21/11: azul = ida, rojo = vuelta). Sin flecha: disco liso (no significa nada)."""
+    N = int(lado_m * PX_M)
+    tex = np.full((N, N, 3), 240, np.uint8)
+    col = AZUL_SENAL if color == "azul" else ROJO_SENAL
+    r = int(N * float(rng.uniform(0.40, 0.46)))
+    cv2.circle(tex, (N // 2, N // 2), r, (15, 15, 15), -1, cv2.LINE_AA)
+    cv2.circle(tex, (N // 2, N // 2), int(r * 0.88), col, -1, cv2.LINE_AA)
+    if flecha:
+        m = flecha_giro(rng.uniform(0.13, 0.17), 0.28, rng.uniform(0.24, 0.28), 0.18, 0.72)
+        if direccion == "izq":
+            m = cv2.flip(m, 1)
+        elif direccion == "arriba":
+            m = cv2.rotate(m, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        k = int(r * 1.15)
+        mm = cv2.resize(m, (k, k), interpolation=cv2.INTER_AREA)
+        o = (N - k) // 2
+        tex[o:o + k, o:o + k][mm > 127] = (15, 15, 15)
+    return tex
+
+
+def textura_prohibido(rng, lado_m=0.20):
+    """Aro negro con barra diagonal sobre papel blanco (la senal de prohibido del PDF): no significa nada."""
+    N = int(lado_m * PX_M)
+    tex = np.full((N, N, 3), 240, np.uint8)
+    r = int(N * float(rng.uniform(0.40, 0.46)))
+    g = max(4, int(r * 0.22))
+    cv2.circle(tex, (N // 2, N // 2), r, (15, 15, 15), g, cv2.LINE_AA)
+    d = int(r * 0.72)
+    cv2.line(tex, (N // 2 - d, N // 2 - d), (N // 2 + d, N // 2 + d), (15, 15, 15), g, cv2.LINE_AA)
+    return tex
+
+
+def textura_bandera(rng, ancho_m=A4[0], alto_m=A4[1], cols=9, filas=5):
+    """Hoja A4 apaisada con la bandera a cuadros ondulada (como la que pego el profe en la pared del fondo el
+    21/11): damero negro/blanco de `cols` x `filas` cuadros, deformado con una onda, ocupando el centro."""
+    W, H = int(ancho_m * PX_M), int(alto_m * PX_M)
+    tex = np.full((H, W, 3), 240, np.uint8)
+    cw, ch = W * 0.78 / cols, H * 0.62 / filas
+    x0, y0 = W * 0.11, H * 0.19
+    amp = float(rng.uniform(0.15, 0.35)) * ch                              # onda vertical
+    fase = float(rng.uniform(0, 2 * math.pi))
+    for i in range(filas):
+        for j in range(cols):
+            if (i + j) % 2:
+                continue
+            pts = []
+            for dx, dy in ((0.05, 0.05), (0.95, 0.05), (0.95, 0.95), (0.05, 0.95)):    # cuadros con un hilo
+                x = x0 + (j + dx) * cw                                                 # blanco entre ellos
+                y = y0 + (i + dy) * ch + amp * math.sin(fase + 2 * math.pi * (j + dx) / cols) + (j + dx) * ch * 0.08
+                pts.append([x, y])                                                     # (como la impresa)
+            cv2.fillPoly(tex, [np.array(pts, np.int32)], (20, 20, 20), cv2.LINE_AA)
+    return tex
+
+
 def cartel_en_pared(a, b, centro_s, ancho, z0, alto, textura, tipo, lado=1):
     """Cartel pegado a la pared a->b, centrado en la fraccion `centro_s`, mirando hacia `lado`
     (+1 = a la izquierda de a->b)."""
@@ -773,12 +834,15 @@ def laberinto(semilla, C=7, F=6, celda=0.8, persona=None, n_rostros=1, sep=None,
                            paso=min(PASO_MIN, (celda - t) / 2 - 0.1))   # pasillos angostos: holgura en la rejilla
 
 
-def tubo(semilla, persona=None, n_rostros=5, sep=None, giros=None, ramas=None, flechas=True, cajas=None):
-    """Circuito como el del simulacro del 19/11 y lo que dijo el profe: pasillos de cajas bajas con 1-3 giros
-    de 90 grados (una senal de color en la pared de enfrente de cada giro, a veces una rama sin salida del otro
-    lado) y al final un callejon sin salida ("el tubo") con las fotos pegadas en sus DOS COSTADOS, nunca en la
-    pared del fondo. Fotos chicas (12-16 cm) con su QR debajo. Algunas cajas sueltas en los pasillos (no en el
-    tubo) dejan pasos de >= 0.5 m."""
+def tubo(semilla, persona=None, n_rostros=4, sep=None, giros=None, ramas=None, flechas=True, cajas=None,
+         bandera=True, distractores=True):
+    """Circuito como el del simulacro del 19/11 y lo que dijo el profe (19 y 21/11): pasillos de cajas bajas con
+    1-3 giros de 90 grados (una senal en la pared de enfrente de cada giro: blanco y negro o disco azul con flecha
+    negra; a veces una rama sin salida del otro lado) y al final un callejon sin salida ("el tubo") con la
+    BANDERA A CUADROS (hoja A4 apaisada) en la pared del fondo y las fotos pegadas en sus DOS COSTADOS, 2 y 2
+    (con n_rostros = 4; otro numero: repartidas al azar). Fotos chicas (12-16 cm) con su QR debajo. Con
+    `distractores`: discos rojos con flecha (para la vuelta: no cuentan), discos lisos y senales de prohibido en
+    algunas paredes. Algunas cajas sueltas en los pasillos (no en el tubo) dejan pasos de >= 0.5 m."""
     rng = np.random.default_rng(semilla)
     ancho = round(rng.uniform(0.85, 1.20) / (2 * RES)) * 2 * RES          # pasillos de ~1 m como en el lab
     h = ancho / 2
@@ -831,14 +895,27 @@ def tubo(semilla, persona=None, n_rostros=5, sep=None, giros=None, ramas=None, f
     largo_t = float(np.linalg.norm(c1 - c0))
     # puestos en los costados: desde la boca del tubo (pasado el empalme) hasta 0.25 m del fondo
     t_ini, t_fin = h + 0.25, largo_t + h - 0.25                          # medidos desde c0 a lo largo de ud
-    puestos = []
+    if bandera and n_rostros <= 4:
+        # (21/11) las 4 fotos van cerca del fondo, junto a la bandera: los puestos empiezan a 2-3 separaciones
+        # del fondo (asi desde el centro del tubo se ven todas girando en el sitio)
+        t_ini = max(t_ini, t_fin - float(rng.uniform(1.6, 2.6)) * sep_f)
+    puestos = {1: [], -1: []}
     for lado in (1, -1):
         k = 0
-        while t_ini + k * sep_f <= t_fin:
-            puestos.append((t_ini + k * sep_f + float(rng.uniform(-0.04, 0.04)), lado))
+        while t_ini + k * sep_f <= t_fin + 1e-6:
+            puestos[lado].append((t_ini + k * sep_f + float(rng.uniform(-0.04, 0.04)), lado))
             k += 1
-    rng.shuffle(puestos)
-    elegidos = sorted(puestos[:n_rostros])
+    if n_rostros % 2 == 0 and all(len(puestos[l]) >= n_rostros // 2 for l in (1, -1)):
+        elegidos = []                                                     # mitad y mitad (21/11: 2 y 2)
+        for lado in (1, -1):
+            ps = list(puestos[lado])
+            rng.shuffle(ps)
+            elegidos += ps[:n_rostros // 2]
+        elegidos.sort()
+    else:
+        todos_p = puestos[1] + puestos[-1]
+        rng.shuffle(todos_p)
+        elegidos = sorted(todos_p[:n_rostros])
     # cajas sueltas en los pasillos de antes del tubo (obstaculos), sin cerrar el camino
     meta = tuple(c1 - ud * 0.4)
     n_cajas = int(rng.integers(0, 3) if cajas is None else cajas)
@@ -869,7 +946,8 @@ def tubo(semilla, persona=None, n_rostros=5, sep=None, giros=None, ramas=None, f
         col = tuple(int(np.clip(v * rng.uniform(0.85, 1.12), 0, 255)) for v in CARTON)
         _caja(paredes, c, r, r, alto, col)
     texturizar(paredes, rng)
-    # senales: en la pared de enfrente de cada giro, mirando al que llega
+    # senales: en la pared de enfrente de cada giro, mirando al que llega: blanco y negro (como las que tiene
+    # impresas el grupo) o disco azul con flecha negra (las del profe, 21/11)
     carteles = []
     if flechas:
         for p, d_in, giro in giros_l:
@@ -879,10 +957,54 @@ def tubo(semilla, persona=None, n_rostros=5, sep=None, giros=None, ramas=None, f
             a, b = frente - pp * h, frente + pp * h
             dir_ = "izq" if giro > 0 else "der"
             lado = float(rng.uniform(0.18, 0.22))
-            col = COLORES_SENAL[int(rng.integers(len(COLORES_SENAL)))]
-            tex = textura_flecha(dir_, rng, estilo="giro", lado_m=lado, color=col)
+            if rng.random() < 0.5:
+                tex = textura_disco(dir_, rng, "azul", True, lado_m=lado)
+            else:
+                tex = textura_flecha(dir_, rng, estilo="giro", lado_m=lado, color=COLORES_SENAL[0])
             carteles.append(cartel_en_pared(a, b, 0.5 + float(rng.uniform(-0.15, 0.15)), lado,
                                             float(rng.uniform(0.04, 0.12)), lado, tex, "flecha:" + dir_))
+    if flechas and distractores:
+        # disco ROJO con flecha para la vuelta: en cada giro, en la pared que se tiene de frente al VOLVER
+        # (apunta al giro inverso); no cuenta para la ida. Y por ahi un disco liso o un prohibido
+        for p, d_in, giro in giros_l:
+            if rng.random() < 0.7:
+                u_out = np.array(DIRS[(d_in + giro) % 4], float)
+                pp = np.array([-u_out[1], u_out[0]])
+                frente = p - u_out * h
+                a, b = frente + pp * h, frente - pp * h                   # mirando hacia +u_out (al que vuelve)
+                dir_ = "der" if giro > 0 else "izq"
+                lado = float(rng.uniform(0.18, 0.22))
+                carteles.append(cartel_en_pared(a, b, 0.5 + float(rng.uniform(-0.15, 0.15)), lado,
+                                                float(rng.uniform(0.04, 0.12)), lado,
+                                                textura_disco(dir_, rng, "rojo", True, lado_m=lado), "distractor:rojo"))
+        for _ in range(int(rng.integers(0, 3))):
+            if len(centros) < 2:
+                break
+            i = int(rng.integers(len(centros) - 1))
+            a_, b_ = centros[i], centros[i + 1]
+            seg = b_ - a_
+            L = float(np.linalg.norm(seg))
+            if L < 0.8:
+                continue
+            u = seg / L
+            pp = np.array([-u[1], u[0]])
+            lado_p = float(rng.choice([-1.0, 1.0]))
+            c = a_ + seg * float(rng.uniform(0.3, 0.7)) + pp * lado_p * h   # punto de una pared del pasillo
+            a, b = c - u * 0.3, c + u * 0.3
+            if lado_p > 0:
+                a, b = b, a
+            lado = float(rng.uniform(0.18, 0.22))
+            que = rng.choice(["liso_azul", "liso_rojo", "prohibido"])
+            tex = (textura_prohibido(rng, lado) if que == "prohibido"
+                   else textura_disco("der", rng, "azul" if que == "liso_azul" else "rojo", False, lado))
+            carteles.append(cartel_en_pared(a, b, 0.5, lado, float(rng.uniform(0.04, 0.12)), lado, tex,
+                                            "distractor:" + que))
+    if bandera:
+        # la bandera a cuadros (hoja A4 apaisada, mas o menos a la altura de la camara) en la pared del FONDO
+        fondo_c = c1 + ud * h
+        a, b = fondo_c - perp * h, fondo_c + perp * h                     # mirando hacia -ud (al que entra)
+        carteles.append(cartel_en_pared(a, b, 0.5 + float(rng.uniform(-0.1, 0.1)), A4[0],
+                                        float(rng.uniform(0.06, 0.16)), A4[1], textura_bandera(rng), "bandera"))
     # fotos con QR: personas distintas, la buscada en uno de los puestos al azar
     k_obj = int(rng.integers(len(elegidos)))
     gente, usadas = [], set()
@@ -1032,9 +1154,9 @@ def construir(nombre, persona=None):
         F = int(partes[3]) if len(partes) > 3 else 6
         celda = float(partes[4]) if len(partes) > 4 else 0.8
         return laberinto(semilla, C, F, celda, persona=persona, n_rostros=n_rostros, sep=sep)
-    if partes[0] == "tubo":                                      # tubo:N[+K] (defecto 5 fotos en los costados)
+    if partes[0] == "tubo":                                      # tubo:N[+K] (defecto 4 fotos, 2 y 2, y bandera)
         semilla = int(partes[1]) if len(partes) > 1 else 0
-        return tubo(semilla, persona, n_rostros=n_rostros if "+" in nombre_orig else 5, sep=sep)
+        return tubo(semilla, persona, n_rostros=n_rostros if "+" in nombre_orig else 4, sep=sep)
     if partes[0] == "lab":                                       # lab:N = denso con la meta en cualquier pared
         semilla = int(partes[1]) if len(partes) > 1 else 0
         return sala_densa(semilla, 4.0, 4.0, persona, n_rostros=n_rostros, sep=sep, pared="azar")

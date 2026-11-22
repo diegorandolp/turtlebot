@@ -41,6 +41,14 @@ fi
 LOG="~/$DIR/carrera.log"
 # En la Raspberry el puente ya tiene ROS; la carrera NO necesita ROS, solo Python, numpy y OpenCV.
 PY_ROBOT="cd ~/$DIR && python3"
+# python de la PC: el que tenga numpy (en Git Bash, python3 suele ser otro interprete sin numpy), o PYTHON
+PY_PC="${PYTHON:-}"
+if [ -z "$PY_PC" ]; then
+  for c in python python3 py; do
+    if command -v "$c" >/dev/null && "$c" -c "import numpy" 2>/dev/null; then PY_PC="$c"; break; fi
+  done
+  PY_PC="${PY_PC:-python3}"
+fi
 
 case "$MODE" in
   --copiar)
@@ -125,11 +133,11 @@ case "$MODE" in
     "${SSH[@]}" "$TARGET" "touch ~/$DIR/GO && echo '[ok] salida dada'"
     ;;
   --start)
-    TB4_IP="$IP" python3 "$ROOT/robot/control_carrera.py" "$IP" "$@"
+    TB4_IP="$IP" "$PY_PC" "$ROOT/robot/control_carrera.py" "$IP" "$@"
     ;;
   --escuchar)
     # La Raspberry no tiene parlante: la PC sigue el log y dice en voz alta la linea del anuncio ("==== La palabra es X ====").
-    "${SSH[@]}" "$TARGET" "tail -n 5 -F $LOG" | python3 -u "$ROOT/robot/escuchar_anuncio.py"
+    "${SSH[@]}" "$TARGET" "tail -n 5 -F $LOG" | "$PY_PC" -u "$ROOT/robot/escuchar_anuncio.py"
     ;;
   --estado)
     "${SSH[@]}" "$TARGET" "pgrep -af '[c]arrera-1/carrera.py' || echo 'la carrera NO esta corriendo'; tail -n 25 $LOG 2>/dev/null"
