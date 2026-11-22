@@ -7,10 +7,10 @@ Gestos:
     ARR_DER / ARR_IZQ   diagonal arriba                 (45°)
     ABA_DER / ABA_IZQ   diagonal abajo                  (135°)
     ABA                 abajo                           (180°, dar la vuelta)
-  (el índice hacia arriba no es un gesto: arriba se usa para V, 3 dedos y STOP)
+  (el índice hacia arriba no es un gesto: arriba se usa para V y STOP)
   LENTO    ✌️ V: índice + corazón hacia arriba           -> avanzar lento
-  RAPIDO   🤟 índice + corazón + anular hacia arriba     -> avanzar rápido
-  STOP     ✋ mano abierta hacia arriba (4 dedos)         -> parar
+  RAPIDO   ✊ puño (los 4 dedos doblados)                -> avanzar rápido
+  STOP     ✋ mano abierta (4 dedos), en CUALQUIER dirección -> parar (así se para también en pleno giro)
   NINGUNO  cualquier otra cosa o sin mano
 
 El pulgar no cuenta. No depende de mediapipe: recibe una lista de 21 puntos (x, y) normalizados [0, 1]
@@ -84,7 +84,7 @@ def clasificar(pts, margen=20.0, margen_arriba=40.0):
     Devuelve (gesto, info).
     margen: grados que el índice puede apartarse de cada una de las 7 direcciones (máx. 22.5; entre
             dos direcciones queda un hueco que no cuenta, así no salta de una a otra).
-    margen_arriba: grados que V, 3 dedos y STOP pueden apartarse de la vertical.
+    margen_arriba: grados que V y STOP pueden apartarse de la vertical.
     """
     info = {"estirados": "", "angulo": None}
     if pts is None or len(pts) < 21:
@@ -95,8 +95,12 @@ def clasificar(pts, margen=20.0, margen_arriba=40.0):
     dob = [dedo_doblado(pts, d) for d in dedos4]
     info["estirados"] = "".join("IMAP"[i] if e else "." for i, e in enumerate(ext))
 
+    # Puño: los 4 dedos doblados (cualquier orientación) -> avanzar rápido
+    if all(dob) and not any(ext):
+        return RAPIDO, info
+
     # Gestos "hacia arriba" según cuántos dedos (desde el índice) están estirados
-    n = 4 if all(ext) else 3 if ext[:3] == [True] * 3 and not ext[3] else \
+    n = 4 if all(ext) else \
         2 if ext[:2] == [True] * 2 and not ext[2] and not ext[3] and (dob[2] or dob[3]) else 0
     if n:
         k = n if n < 4 else 2
@@ -104,9 +108,9 @@ def clasificar(pts, margen=20.0, margen_arriba=40.0):
         if n == 4:                                      # mano abierta: se mide la palma
             ang = _angulo(pts[WRIST], pts[MIDDLE[0]])
         info["angulo"] = ang
-        if abs(_dif(ang, 90.0)) > margen_arriba:
+        if n == 2 and abs(_dif(ang, 90.0)) > margen_arriba:   # la V solo hacia arriba; STOP en cualquier dirección
             return NINGUNO, info
-        return {4: STOP, 3: RAPIDO, 2: LENTO}[n], info
+        return {4: STOP, 2: LENTO}[n], info
 
     # Señalar con el índice solo
     if not ext[0] or ext[1] or ext[2] or ext[3] or sum(dob[1:]) < 2:
@@ -126,7 +130,7 @@ class Estabilizador:
     desaparece de la ventana, así los cuadros de transición no lo sueltan.
     """
 
-    def __init__(self, n=6, ventana=8, n_stop=3):
+    def __init__(self, n=5, ventana=8, n_stop=2):
         self.n_por_defecto, self.n_stop = n, n_stop
         self.hist = deque(maxlen=ventana)
         self.actual = NINGUNO

@@ -1,6 +1,6 @@
 """
 Prueba del reconocimiento de gestos con la WEBCAM DE LA PC, SIN robot.
-Gestos: señalar con el índice en 7 direcciones (girar), V (avanzar lento), 3 dedos (rápido), mano abierta (STOP).
+Gestos: señalar con el índice en 7 direcciones (girar), V (avanzar lento), puño (rápido), mano abierta (STOP).
 
 Uso (desde la raíz del repositorio):
   python task-b/gestos-1/probar_gestos.py                  # webcam 0, ventana en vivo

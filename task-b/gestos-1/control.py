@@ -5,8 +5,8 @@ Comportamiento:
   - SEÑALAR (índice) en una dirección: el robot deja de avanzar y GIRA en el sitio hacia ese lado, relativo
     a hacia donde mira: derecha/izquierda 90°, diagonales de arriba 45°, de abajo 135°, abajo 180°.
     Al terminar el giro se queda QUIETO.
-  - ✌️ V: AVANZA recto lento. 🤟 3 dedos: AVANZA rápido. Si está girando, primero termina el giro.
-    Mientras avanza, cambiar entre V y 3 dedos solo cambia la velocidad.
+  - ✌️ V: AVANZA recto lento. ✊ puño: AVANZA rápido. Si está girando, primero termina el giro.
+    Mientras avanza, cambiar entre V y puño solo cambia la velocidad.
   - STOP: se para en el acto (aunque esté girando) y no hace nada hasta la próxima señal.
   - Mantener la misma señal no repite el giro. Bajar la mano y volver a señalar sí.
   - Sin mano (NINGUNO): sigue haciendo lo que estaba haciendo.
@@ -29,7 +29,7 @@ def wrap(a):
 
 
 class Control:
-    def __init__(self, v_lento=0.07, v_rapido=0.15, w_max=0.6, w_min=0.15, tol_deg=3.0, k_giro=1.5, k_rumbo=1.5):
+    def __init__(self, v_lento=0.15, v_rapido=0.31, w_max=0.6, w_min=0.15, tol_deg=3.0, k_giro=1.5, k_rumbo=1.5):
         self.v = {LENTO: v_lento, RAPIDO: v_rapido}
         self.w_max, self.w_min = w_max, w_min
         self.tol = math.radians(tol_deg)
