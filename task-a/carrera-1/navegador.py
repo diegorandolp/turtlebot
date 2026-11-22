@@ -112,14 +112,16 @@ class Config:
     # --- la meta del 21/11: bandera a cuadros al fondo del tubo, 4 fotos en los costados (2 y 2) ---
     d_meta: float = 0.65            # m del fondo a los que se para a mirar los costados (21/11: con 0.9 quedaba lejos) (desde ahi una foto a 0.5 m
                                     # de la pared de al lado mide ~33 px; a 1 m del punto, ~17 px: se ve, se vota poco)
-    barrido_meta: tuple = (45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0)   # grados respecto a la bandera, en orden:
-                                    # una vuelta entera en un solo sentido, parando cada 45 (21/11: "rotar lento en 360")
+    barrido_meta: tuple = (45.0, 90.0, 135.0, -135.0, -90.0, -45.0)   # grados respecto a la bandera, en orden: un
+                                    # costado y luego el otro, sin pararse mirando atras (22/11: ahi no hay fotos y se
+                                    # perdian ~5 s); de 135 a -135 pasa por atras sin detenerse
     confirmar_hd: bool = False      # (carrera.py lo activa con la bandera) confirmar cada foto de cerca con fotos HD si en la preview la cara es chica
     px_hd_confirmar: float = 40.0   # px: con la cara asi de grande ya no hace falta HD
     t_confirmar_max: float = 11.0   # s maximos frente a una foto para confirmarla (2 fotos HD en la Pi)
     exigir_bandera: bool = False    # (carrera.py lo activa) las fotos solo cuentan si hay bandera confirmada y estan a < r_meta de ella
     r_meta: float = 2.2             # m: (21/11: tomaba caras de gente del fondo del lab y fotos sueltas por meta)
     t_sin_bandera: float = 100.0    # s de carrera sin ver la bandera: desde ahi cualquier cara cuenta (respaldo)
+    r_salida: float = 1.5           # m: una bandera a menos de esto de A es la de la salida, no la meta
     z_max_cara: float = 0.5         # m: una cara mas alta que esto no es de una foto de la meta (es una persona)
     mirar_meta_s: float = 1.2       # s quieto en cada rumbo del barrido, minimo; sigue quieto hasta recibir 3 fotos
     mirar_meta_max: float = 2.5     # (2 tomadas ya parado: la Pi entrega cada foto ~0.5 s despues) o hasta este max
@@ -400,8 +402,9 @@ class Carrera:
         if self.confirmando_hd:
             return True
         f = self._qr
+        espera = 0.0 if self.cfg.confirmar_hd else self.cfg.qr_preview_s     # (meta: la preview no alcanza, HD ya)
         return bool(self.quiere_qr and self.estado == LEER_QR and f is not None and f["paso"] >= 0
-                    and self._t_ahora - f.get("t_frente", f["t_ini"]) > self.cfg.qr_preview_s)
+                    and self._t_ahora - f.get("t_frente", f["t_ini"]) > espera)
 
     @property
     def confirmando_hd(self):
@@ -580,6 +583,8 @@ class Carrera:
         if mejor is None:
             if self.estado in (FILA, META):
                 return                                             # sigue recorriendo la fila / el barrido
+            if self._en_la_meta_sin_salir(now):
+                return
             if self._empezar_fila(now):
                 return
             hay_otra = any(c.estado == "otra" for c in self.candidatas)
@@ -1042,6 +1047,16 @@ class Carrera:
         if f["paso"] >= 0:
             self._prog = None                                      # quieto mirando: no es estar atascado
         if f["paso"] == -1:                                        # ponerse de frente
+            mp = self.obj.mejor_pose if self.cfg.exigir_bandera else None
+            if mp is not None and "frente" not in f:
+                # (22/11) volver a donde mejor se la vio (y ya cerca: quedarse) en vez de buscar el frente por el mapa
+                if math.hypot(mp[0] - x, mp[1] - y) < 0.25:
+                    f.update(paso=0, t0=now, th0=mp[2], t_frente=now)
+                    self.nota(now, "leo el QR desde aqui (donde mejor la vi)")
+                    return 0.0, 0.0
+                f["frente"] = (mp[0], mp[1])
+                f["t_n"] = now + 1e9                               # fijo: no recalcular por la pared
+                self.nota(now, f"vuelvo a donde mejor la vi ({mp[0]:.2f}, {mp[1]:.2f}) para leer el QR")
             if now - f.get("t_n", -1e9) > 1.0:
                 f["t_n"] = now
                 n = self._normal_pared(self.obj.xy)
@@ -1119,6 +1134,8 @@ class Carrera:
         esta buscando, se va al centro del tubo frente a ella (META)."""
         if not self.cfg.buscar or self.estado in (PAUSA, VOLVER, HECHO) or o.girando:
             return False
+        if math.hypot(o.xy[0] - self.home[0], o.xy[1] - self.home[1]) < self.cfg.r_salida:
+            return False                                            # (22/11: tambien habra una bandera en la salida)
         b = self.bandera
         if b is None or math.hypot(b["xy"][0] - o.xy[0], b["xy"][1] - o.xy[1]) > 1.0:
             if b is not None and b["n"] >= 2:
@@ -1134,6 +1151,38 @@ class Carrera:
         if (b["n"] >= 2 and self.estado in (IDA, EXPLORAR, FILA) and not self._barrido_meta
                 and not any(c.estado == "objetivo" for c in self.candidatas)):
             self._empezar_meta(now)
+        return True
+
+    def _en_la_meta_sin_salir(self, now):
+        """(22/11) Ya se encontro la meta (bandera + vuelta hecha) y no queda foto a la que ir: NO salir a explorar
+        el resto del circuito (el robot se iba lejos sabiendo donde estaba la bandera). Otra vuelta desde el
+        centro (hasta 2 en total); despues, la mas parecida a la buscada de las fotos de la meta, por descarte."""
+        if not (self.cfg.exigir_bandera and self._barrido_meta and self.bandera is not None):
+            return False
+        self.vueltas_meta = getattr(self, "vueltas_meta", 1)
+        if self.vueltas_meta < 2:
+            self.vueltas_meta += 1
+            self._barrido_meta = False
+            for c in self.candidatas:                               # las dudosas se pueden volver a revisar
+                if not c.descartada:
+                    c.revisiones = 0
+            self.nota(now, "no queda foto por revisar en la meta: otra vuelta desde el centro (no salgo a explorar)")
+            self._empezar_meta(now)
+            return True
+        fotos = [c for c in self.candidatas if c.xy is not None and c.vot.n >= 1 and not c.descartada
+                 and self._en_meta(c.xy)]
+        if not fotos:
+            return False
+        c = max(fotos, key=self._p_buscada)
+        self.nota(now, f"segunda vuelta sin decidir: la #{c.id} (p={self._p_buscada(c):.2f}) es la mas parecida a "
+                       f"{self.cfg.buscar} de las de la meta: voy a leer su QR")
+        c.estado, c.por_ranking = "objetivo", False
+        self.obj, self.vot = c, c.vot
+        self.nombre, self.prob = self.cfg.buscar, self._p_buscada(c)
+        self.t_b = self.t_b or now
+        self.estado = LEER_QR
+        self._qr = dict(paso=-1, t0=now, th0=self._pos[2], t_ini=now)
+        self._reset_ruta()
         return True
 
     def _centro_tubo(self, q, n):
@@ -1448,6 +1497,8 @@ class Carrera:
         else:
             self.h_pref = wrap(self.h_pref + 0.04 * wrap(th - self.h_pref))
         if self.exp is not None and now - self.t_nuevo > self.cfg.estancado_s:
+            if self._en_la_meta_sin_salir(now):
+                return 0.0, 0.0
             self.nota(now, f"{self.cfg.estancado_s:.0f} s sin sitios nuevos: EXPLORAR (plan B)")
             self.estado = EXPLORAR
             self.exp.start()

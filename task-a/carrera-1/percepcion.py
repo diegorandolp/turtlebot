@@ -18,6 +18,10 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+
+def wrap(a):
+    return (a + np.pi) % (2 * np.pi) - np.pi
+
 from flechas import ARRIBA, DER, IZQ
 from qr import buscar_qrs
 
@@ -159,6 +163,7 @@ class Objetivo:
         self.t_ultima = -1e9
         self.ultima = None          # ultima Obs
         self.pose_ultima = None     # pose del robot en la ultima deteccion (para apuntar a la cara vista)
+        self.mejor_pose = None      # (x, y, rumbo hacia la foto) donde se la vio mas grande (22/11: volver ahi para el QR)
         self.ancho_max = 0.0
         self._pos = []              # posiciones recientes (sin las fotos tomadas girando)
         self._k = recientes
@@ -178,7 +183,9 @@ class Objetivo:
         self.t_ultima = o.t
         self.ultima = o
         self.pose_ultima = pose
-        self.ancho_max = max(self.ancho_max, o.px)
+        if pose is not None and not o.girando and o.px >= self.ancho_max:
+            self.mejor_pose = (float(pose[0]), float(pose[1]), float(wrap(pose[2] + o.rumbo)))   # donde se la vio
+        self.ancho_max = max(self.ancho_max, o.px)                                           # mas grande, mirandola
         if o.res is not None:
             self.vot.agregar(o.res.sims, peso)
 
