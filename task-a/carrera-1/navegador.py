@@ -105,6 +105,8 @@ class Config:
     rank_ventaja: float = 1.0       # ...y esta ventaja (veces) sobre la segunda   mas parecida y se confirma de cerca)
     rank_confirmar: float = 0.5     # de cerca (cara >= px_confirmar) la elegida por ranking se da por buena si la
     px_confirmar: float = 24.0      # buscada es la mas votada con p >= rank_confirmar (foto chica a 0.55 m: ~25 px)
+    p_aceptar: float = 0.45         # (meta) la buscada gana de cerca pero con p menor: no basta, queda dudosa (21/11:
+                                    # dijo "Luis" con p=0.10, acerto de suerte; un nombre equivocado es la peor nota)
     p_descartar: float = 0.6        # ...y se DESCARTA solo si otra persona gana con p >= esto; si de cerca no se sabe
                                     # quien es (p chicas), queda "dudosa" y se revisan primero las demas
     # --- la meta del 21/11: bandera a cuadros al fondo del tubo, 4 fotos en los costados (2 y 2) ---
@@ -1655,7 +1657,7 @@ class Carrera:
         c = self.obj
         nombre, p = self.vot.lider()
         top = ", ".join(f"{n} {q:.2f}" for n, q in self.vot.top(3))
-        if nombre == self.cfg.buscar:
+        if nombre == self.cfg.buscar and not (self.cfg.exigir_bandera and c.por_ranking and p < self.cfg.p_aceptar):
             c.estado = "objetivo"
             self.nombre, self.prob = nombre, p
             self.t_b = self.t_b or now
