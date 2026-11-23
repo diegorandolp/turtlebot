@@ -526,13 +526,35 @@ class Carrera:
         b = self.bandera
         if b is None or b["n"] < 2:
             t = 0.0 if self.t_inicio is None else self._t_ahora - self.t_inicio
-            return t >= self.cfg.t_sin_bandera
+            if t >= self.cfg.t_sin_bandera:
+                return True
+            # (23/11) sin bandera: DOS fotos distintas (bajas, a > 0.3 m una de otra) vistas en 5 s = estoy en la
+            # meta aunque la bandera no se haya visto; cuentan las que esten cerca de ellas
+            grupo = getattr(self, "_meta_sin_bandera", None)
+            if grupo is not None:
+                return math.hypot(xy[0] - grupo[0], xy[1] - grupo[1]) < self.cfg.r_meta
+            return False
         return math.hypot(xy[0] - b["xy"][0], xy[1] - b["xy"][1]) < self.cfg.r_meta
 
     def _recordar_cara(self, now, o):
         """Caras vistas sin bandera confirmada: no son candidatas, pero sirven para confirmar la bandera (23/11)."""
+        if getattr(o, "z", 0.0) > self.cfg.z_max_cara:
+            return                                                  # una persona, no una foto
         self._caras_sueltas = [(t, xy) for t, xy in getattr(self, "_caras_sueltas", []) if now - t < 5.0]
         self._caras_sueltas.append((now, tuple(o.xy)))
+        if getattr(self, "_meta_sin_bandera", None) is None and self.estado in (IDA, EXPLORAR, FILA):
+            otras = [xy for t, xy in self._caras_sueltas[:-1]
+                     if 0.3 < math.hypot(xy[0] - o.xy[0], xy[1] - o.xy[1]) < self.cfg.r_meta
+                     and math.hypot(xy[0] - self.home[0], xy[1] - self.home[1]) > self.cfg.r_salida]
+            if otras and math.hypot(o.xy[0] - self.home[0], o.xy[1] - self.home[1]) > self.cfg.r_salida:
+                cx = (o.xy[0] + otras[0][0]) / 2.0
+                cy = (o.xy[1] + otras[0][1]) / 2.0
+                self._meta_sin_bandera = (cx, cy)
+                self.nota(now, f"dos fotos distintas a la vista en ({cx:.2f}, {cy:.2f}) y sin bandera: lo tomo como "
+                               f"la meta y miro alrededor")
+                self.marca(now, "meta_por_fotos")
+                th = self._pos[2]
+                self._mirar = [wrap(th + math.radians(60)), wrap(th - math.radians(60)), th]
 
     @property
     def candidatas_meta_posibles(self):
