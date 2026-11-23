@@ -55,7 +55,9 @@ def wrap(a):
 class Config:
     vmax: float = 0.30              # m/s en la ida (el Create 3 llega a ~0.31)
     vmax_vuelta: float = 0.31       # m/s en la vuelta (camino conocido)
-    wmax: float = 1.8               # rad/s
+    wmax: float = 1.8               # rad/s (vuelta y atascos)
+    wmax_buscar: float = 0.9        # rad/s mientras se busca (23/11: girando a 1.8 ninguna foto sale nitida y
+                                    # se pasan de largo la bandera y las fotos; a 0.9 la camara aun las ve)
     medio_ancho: float = 0.21       # m: medio ancho del carril para ELEGIR rumbo. >= el pasillo del freno del
                                     # puente (+-0.20 m): con 0.18 elegia carriles con una caja a 0.19 m de lado,
                                     # el freno no lo dejaba avanzar y se quedaba quieto mirando ese rumbo
@@ -948,7 +950,7 @@ class Carrera:
                 if "llego" not in f:
                     f["llego"] = d < 0.5                            # (por tiempo y lejos: ese tramo no se vio bien)
                 if abs(err) > 0.12 and now - f["t_punto"] < 14.0:
-                    return 0.0, float(np.clip(2.2 * err, -1.8, 1.8))
+                    return 0.0, float(np.clip(2.2 * err, -self.cfg.wmax_buscar, self.cfg.wmax_buscar))
                 f["mirando_desde"] = now
             if now - f["mirando_desde"] < self.cfg.mirar_s:        # quieto mirando la pared (2 fotos en la Pi)
                 return 0.0, 0.0
@@ -1495,9 +1497,11 @@ class Carrera:
         if phi is None:                                         # encerrado: girar hacia lo mas abierto
             k = int(np.argmax(self.libres))
             return 0.0, math.copysign(self.cfg.wmax * 0.6, ANGS[k] if ANGS[k] != 0 else 1.0)
-        r = ventana_dinamica(self.px, self.py, phi, vmax, self.cfg.wmax, self.cfg.radio_seguro, self.bloq_frente)
+        wmax = self.cfg.wmax_buscar if (self.cfg.buscar and self.estado in BUSCANDO and now >= self._desvio[0]) \
+            else self.cfg.wmax
+        r = ventana_dinamica(self.px, self.py, phi, vmax, wmax, self.cfg.radio_seguro, self.bloq_frente)
         if r is None:                                           # ningun arco seguro: girar en el sitio
-            v, w = 0.0, math.copysign(self.cfg.wmax * 0.6, phi if phi != 0 else 1.0)
+            v, w = 0.0, math.copysign(wmax * 0.6, phi if phi != 0 else 1.0)
         else:
             v, w = r
         self._vigilar_atasco(now, pos)
