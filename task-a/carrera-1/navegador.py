@@ -529,10 +529,23 @@ class Carrera:
             return t >= self.cfg.t_sin_bandera
         return math.hypot(xy[0] - b["xy"][0], xy[1] - b["xy"][1]) < self.cfg.r_meta
 
+    def _recordar_cara(self, now, o):
+        """Caras vistas sin bandera confirmada: no son candidatas, pero sirven para confirmar la bandera (23/11)."""
+        self._caras_sueltas = [(t, xy) for t, xy in getattr(self, "_caras_sueltas", []) if now - t < 5.0]
+        self._caras_sueltas.append((now, tuple(o.xy)))
+
+    @property
+    def candidatas_meta_posibles(self):
+        class _C:
+            def __init__(s, t, xy): s.t, s.xy = t, xy
+            def visto_hace(s, now): return now - s.t
+        return [_C(t, xy) for t, xy in getattr(self, "_caras_sueltas", [])]
+
     def _ver_cara_buscar(self, now, o, peso):
         if self.estado in (PAUSA, VOLVER, HECHO):
             return False
         if not self._en_meta(o.xy):
+            self._recordar_cara(now, o)                         # (se guarda: si aparece la bandera, cuentan)
             return False                                        # sin bandera (o lejos de ella) una cara no es la meta
         if self.cfg.exigir_bandera and getattr(o, "z", 0.0) > self.cfg.z_max_cara:
             return False                                        # muy alta: una persona, no una foto pegada abajo
@@ -1176,7 +1189,13 @@ class Carrera:
         antes = b["n"]
         # (22/11) confianza: hoja sobre carton (como la pone el profe) = 1 vista; sobre otra cosa, media vista (hacen
         # falta 4 para confirmarla). No es requisito: si la pegan sobre otra cosa igual se encuentra, algo mas tarde
-        b["n"] += 1.0 if getattr(o, "carton", 1.0) >= 0.35 else 0.5
+        carton = getattr(o, "carton", 1.0)
+        b["n"] += 1.0 if carton >= 0.35 else 0.5
+        # (23/11) el robot paso girando y la bandera salio nitida en UN solo cuadro: con una vista clara sobre
+        # carton (>= 0.8), o una vista con caras a la vista en los ultimos 3 s, alcanza para confirmarla
+        hay_caras = any(c.xy is not None and c.visto_hace(now) < 3.0 for c in self.candidatas_meta_posibles)
+        if b["n"] < 2 and (carton >= 0.8 or hay_caras):
+            b["n"] = 2.0
         b["t"] = now
         if antes < 2 <= b["n"]:
             self.nota(now, f"bandera de la meta confirmada en ({b['xy'][0]:.2f}, {b['xy'][1]:.2f}) a {o.dist:.1f} m")
