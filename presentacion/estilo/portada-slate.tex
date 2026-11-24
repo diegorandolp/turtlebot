@@ -1,0 +1,77 @@
+% =============================================================================
+% portada-slate.tex — SOLO la portada, adaptada de "slate-blocks" (style.tex).
+%
+% Original: slate-blocks, a Beamer theme with seven named blocks, (c) its
+% contributors, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/);
+% licencia completa en estilo/LICENSE-slate-blocks.
+%
+% Cambios respecto al original:
+%   * se toman solo la paleta, \slatecover y \slatetitlepage; NO se cargan
+%     Madrid/miniframes/circles, ni los colores de beamer, ni los bloques, ni la
+%     marca de agua: el resto de la presentacion usa estilo/tema.tex;
+%   * fondo: la camara del simulador del proyecto mirando el pasillo de las fotos con QR
+%     (figuras/gen/portada_fondo.jpg, generada por scripts/figuras.py) en lugar de la fotografia del tema;
+%   * logotipo mas pequeno (abajo a la derecha) y una linea extra para el asesor;
+%   * autor/asesor/filiacion/fecha en un bloque con velo blanco para que se lean
+%     sobre la imagen del simulador.
+% =============================================================================
+
+% ---- la paleta del tema (un color y sus derivados) --------------------------
+\definecolor{ThemeColor}{RGB}{190, 194, 203}              % #bec2cb
+\definecolor{AnalogousColor-1}{RGB}{193, 190, 203}        % #c1becb
+\definecolor{AnalogousColor-2}{RGB}{190, 201, 203}        % #bec9cb
+\definecolor{TetradicColor-1}{RGB}{203, 190, 194}         % #cbbec2
+\definecolor{TetradicColor-2}{RGB}{203, 199, 190}         % #cbc7be
+\definecolor{TetradicColor-3}{RGB}{190, 203, 199}         % #becbc7
+\definecolor{SplitComplementaryColor-1}{RGB}{203, 193, 190} % #cbc1be
+\definecolor{SplitComplementaryColor-2}{RGB}{201, 203, 190} % #c9cbbe
+
+% ---- una imagen que cubre la pagina sin deformarse ---------------------------
+\makeatletter
+\newsavebox{\slate@coverbox}
+\newcommand{\slatecover}[1]{%
+  \sbox{\slate@coverbox}{\includegraphics[width=\paperwidth]{#1}}%
+  \ifdim\ht\slate@coverbox<\paperheight
+    \includegraphics[height=\paperheight]{#1}%
+  \else
+    \usebox{\slate@coverbox}%
+  \fi
+}
+\makeatother
+
+% ---- campos de la portada ----------------------------------------------------
+\newcommand{\slateBackground}{figuras/gen/portada_fondo.jpg}
+\newcommand{\slateTitle}    {\large\textbf{\textrm{Title}}}
+\newcommand{\slateSubTitle} {\small\textrm{Subtitle}}
+\newcommand{\slateAuthor}   {Author}
+\newcommand{\slateAdvisor}  {}
+\newcommand{\slateAffiliate}{Affiliation}
+\newcommand{\slateDate}     {\today}
+\newcommand{\slateLogo}     {\includegraphics[width=0.17\paperwidth]{figuras/logo_utec.png}}
+
+% ---- la portada ----------------------------------------------------------------
+\newcommand{\slatetitlepage}{%
+  \begin{tikzpicture}[remember picture, overlay]
+    \node[inner sep=0pt, opacity=0.55] at (current page.center)
+      {\slatecover{\slateBackground}};
+    \node[
+      above=0.2cm, align=center,
+      draw=AnalogousColor-1!50,
+      left color=AnalogousColor-1!75, right color=AnalogousColor-1!25,
+      shading angle=60,
+      double, double distance=0.1cm,
+      inner xsep=15pt, inner ysep=10pt,
+      minimum width=0.74\textwidth, text width=0.66\textwidth,
+      color=AnalogousColor-2!250,
+    ] (title) at (current page.center)
+      {\LARGE\slateTitle\ifx\slateSubTitle\empty\else\\[5pt] \small\slateSubTitle\fi};   % sin subtitulo: \def\slateSubTitle{}
+    % autores, curso, filiacion y fecha en un solo bloque con un velo blanco: sobre la imagen
+    % el texto gris del tema original no se leia
+    \node[below=0.4cm, align=center, fill=white, fill opacity=0.78, text opacity=1,
+      rounded corners=3pt, inner xsep=10pt, inner ysep=5pt, text=AnalogousColor-1!250]
+      (author) at (title.south)
+      {\slateAuthor\\[2pt] \small\slateAdvisor\\[1pt] \small\slateAffiliate\\[3pt] \slateDate};
+    \node[fill=white, fill opacity=0.85, text opacity=1, rounded corners=3pt, inner sep=4pt,
+      anchor=south east] at ([xshift=-0.4cm, yshift=0.35cm]current page.south east) {\slateLogo};
+  \end{tikzpicture}%
+}

@@ -1,0 +1,190 @@
+% =============================================================================
+% tema.tex — aspecto de todas las diapositivas salvo la portada.
+%
+% Mismo estilo que presentacion_referencia/estilo/tema.tex (plantilla PPGE-UCB adaptada): fondo blanco,
+% título arriba a la izquierda sin barra, sin cabecera, pie con una franja gruesa (morado) y otra fina
+% (celeste), navegación por secciones con un punto por diapositiva y número de diapositiva a la derecha.
+% Estilo minimalista: texto en gris oscuro (cInk) y gris (cSrc), un solo acento (cAcc) para títulos y
+% cifras clave; los colores de los datos solo en las figuras.
+%
+% Cambios respecto a la referencia: colores de los estados de la carrera (IDA, FILA, QR, VUELTA), estilos
+% TikZ de las figuras del robot, pgfplots para los gráficos, y el dibujo del cierre es el circuito
+% (cajas, una señal, fotos con QR y el robot) en lugar de las edificaciones.
+% =============================================================================
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[sfdefault,lining]{FiraSans}
+\usepackage[spanish,es-nodecimaldot,es-noshorthands]{babel}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{fontawesome5}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{positioning,arrows.meta,calc,fit,backgrounds,shapes.misc,shapes.geometric,babel}
+
+% ---- paleta (la de la referencia) -------------------------------------------------
+\definecolor{cPub}{HTML}{8A97EE}     % morado
+\definecolor{cAcc}{HTML}{4F5FC8}     % morado oscuro (titulos, acentos)
+\definecolor{cLight}{HTML}{00BFFF}   % celeste
+\definecolor{cCelD}{HTML}{0090C8}    % celeste oscuro (texto sobre blanco)
+\definecolor{cEncBg}{HTML}{DEE2FB}   % morado claro
+\definecolor{cDecBg}{HTML}{D9F4FF}   % celeste claro
+\definecolor{cInk}{HTML}{2E3140}
+\definecolor{cOurs}{HTML}{D92626}
+\definecolor{cOursD}{HTML}{9E1B1B}
+\definecolor{cUni}{HTML}{E08A2E}
+\definecolor{cUniD}{HTML}{A85E14}
+\definecolor{cSrc}{HTML}{5A5D6E}
+\definecolor{cMuted}{HTML}{8A8A96}
+\definecolor{cRule}{HTML}{E2E3EA}
+\definecolor{cPaper}{HTML}{F5F6FA}
+\definecolor{cOk}{HTML}{3C9A5F}
+% estados de la carrera (Tarea A), iguales en el circuito, la línea de tiempo y la máquina de estados
+% solo dos colores en los diagramas (morado y celeste, con sus tonos claros); los demas son grises
+\colorlet{cIda}{cAcc}
+\colorlet{cFila}{cCelD}
+\colorlet{cQr}{cLight}
+\colorlet{cVuelta}{cPub}
+
+% ---- estructura de la plantilla -------------------------------------------------
+\useoutertheme[subsection=false]{miniframes}
+\useinnertheme{rectangles}
+\setbeamertemplate{navigation symbols}{}
+\setbeamersize{text margin left=10mm, text margin right=10mm}
+
+\setbeamercolor{normal text}{fg=cInk, bg=white}
+\setbeamercolor{background canvas}{bg=white}
+\setbeamercolor{structure}{fg=cAcc}
+\setbeamercolor{alerted text}{fg=cOurs}
+\setbeamercolor{frametitle}{fg=cAcc, bg=white}
+\setbeamercolor{footline1}{bg=cPub}
+\setbeamercolor{footline2}{bg=cLight}
+\setbeamercolor{section in head/foot}{fg=cAcc, bg=white}
+\setbeamercolor{mini frame}{fg=cAcc}
+\setbeamerfont{frametitle}{size=\Large, series=\mdseries}
+\setbeamerfont{section in head/foot}{size=\fontsize{6.5}{7.5}\selectfont}
+\setbeamertemplate{itemize item}{\color{cAcc}\raisebox{0.2ex}{\tiny$\blacksquare$}}
+\setbeamertemplate{itemize subitem}{\color{cMuted}\raisebox{0.2ex}{\tiny$\blacktriangleright$}}
+\setlength{\leftmargini}{1.1em}
+
+\setbeamertemplate{headline}{}
+
+\setbeamertemplate{frametitle}{%
+  \vskip 4mm
+  {\usebeamerfont{frametitle}\usebeamercolor[fg]{frametitle}\insertframetitle\par}%
+  \vskip 0.8mm
+}
+
+\makeatletter
+\setbeamertemplate{footline}{%
+  \begin{beamercolorbox}[wd=\paperwidth, ht=2.2mm, dp=0pt]{footline1}\end{beamercolorbox}%
+  \begin{beamercolorbox}[wd=\paperwidth, ht=0.6mm, dp=0pt]{footline2}\end{beamercolorbox}%
+  \begin{beamercolorbox}[wd=\paperwidth]{section in head/foot}%
+    \vskip 2pt
+    \hbox to \paperwidth{\insertnavigation{\dimexpr\paperwidth-14mm\relax}\hfill
+      \raisebox{0.4mm}{\fontsize{6}{7}\selectfont\color{cSrc}\insertframenumber\,/\,\inserttotalframenumber}\hskip 5mm}%
+    \vskip 3pt
+  \end{beamercolorbox}}
+\makeatother
+
+% ---- piezas reutilizables ------------------------------------------------------------------
+% cifra grande con leyenda: \cifra{numero}{leyenda}
+\newcommand{\cifra}[2]{{\color{cAcc}\fontsize{17}{19}\selectfont #1}\par\vspace{0.3mm}%
+  {\scriptsize\color{cSrc}#2\par}}
+% texto secundario
+\newcommand{\nota}[1]{{\color{cSrc}#1}}
+% pie de figura (un párrafo chico) y encabezado de una columna
+\newcommand{\etq}[1]{{\fontsize{6.3}{7.6}\selectfont\color{cSrc}#1\par}}
+\newcommand{\cab}[1]{{\footnotesize #1\par}\vspace{0.8mm}}
+
+\tikzset{
+  % --- diagramas de bloques
+  caja/.style={draw=cInk!45, line width=0.5pt, fill=white, rounded corners=2pt, align=center,
+    inner sep=1.8pt, font=\fontsize{6.8}{8}\selectfont, text=cInk, execute at begin node={\hyphenpenalty=10000}},
+  grupo/.style={draw=cInk!25, line width=0.5pt, fill=cPaper, rounded corners=3pt},
+  ar/.style={-{Stealth[length=1.6mm]}, line width=0.6pt, draw=cInk!55},
+  arAcc/.style={-{Stealth[length=1.6mm]}, line width=0.8pt, draw=cAcc},
+  lbl/.style={font=\fontsize{6}{7}\selectfont, text=cSrc, align=center},
+  img/.style={inner sep=0pt, draw=cRule, line width=0.4pt},
+  % --- estados de la carrera
+  est/.style={draw=#1, line width=0.8pt, fill=#1!10, rounded corners=6pt, font=\scriptsize\bfseries, text=#1!70!black,
+    minimum height=6mm, inner xsep=2.5pt, align=center},
+  % --- circuito visto desde arriba (figuras/gen/circuito.tex, coordenadas en m)
+  pared/.style={draw=cInk!70, line width=1.3pt, line cap=round},
+  senal/.style={circle, fill=white, draw=cAcc, line width=0.8pt, inner sep=0pt, minimum size=2.4mm},
+  foto/.style={rectangle, fill=cMuted, draw=white, line width=0.3pt, inner sep=0pt, minimum size=1.9mm},
+  buscada/.style={rectangle, fill=cAcc, draw=white, line width=0.3pt, inner sep=0pt, minimum size=2.4mm},
+  puntoA/.style={diamond, fill=cInk, draw=white, line width=0.4pt, inner sep=0pt, minimum size=3mm},
+  % la bandera a cuadros del fondo (la meta): un tablero de 2 x 2
+  bandera/.style={rectangle, fill=white, draw=cInk, line width=0.5pt, inner sep=0pt, minimum size=3mm,
+    path picture={\fill[cInk] (path picture bounding box.south west) rectangle (path picture bounding box.center)
+      (path picture bounding box.center) rectangle (path picture bounding box.north east);}},
+  tIda/.style={draw=cIda, line width=1pt, line join=round},
+  tFila/.style={draw=cFila, line width=0.8pt, line join=round},
+  tQr/.style={draw=cQr, line width=1.3pt, line join=round},
+  tVuelta/.style={draw=cVuelta, line width=1pt, line join=round, dash pattern=on 2.2pt off 1.2pt},
+  % --- ventana dinamica (figuras/gen/arcos.tex, marco del robot, en m)
+  arcoOk/.style={draw=cAcc!45, line width=0.35pt},
+  arcoMal/.style={draw=cMuted!80, line width=0.35pt},
+  arcoElegido/.style={draw=cAcc, line width=1.6pt, -{Stealth[length=1.6mm]}},
+}
+
+% ---- pgfplots: ejes sobrios, en la fuente y los colores de la presentación
+\pgfplotsset{
+  sobrio/.style={
+    axis line style={draw=cInk!45}, tick style={draw=cInk!45},
+    tick label style={font=\fontsize{6}{7}\selectfont, text=cSrc},
+    label style={font=\fontsize{6.5}{7.5}\selectfont, text=cSrc},
+    legend style={font=\fontsize{6}{7}\selectfont, draw=none, fill=none, text=cInk},
+    grid style={draw=cRule}, major grid style={draw=cRule},
+    every axis plot/.append style={line width=0.9pt},
+  },
+}
+
+% ---- dibujo lineal del cierre: el circuito (cajas, una señal, fotos con QR y el robot) ----------------
+% unidades en mm, suelo en y = 0
+\newcommand{\skCaja}[3]{% x, ancho, alto
+  \draw[skL, line width=0.45pt, fill=white] (#1,0) rectangle ++(#2,#3);
+  \draw[skL, line width=0.3pt] (#1,{#3*0.82}) -- ++(#2,0);
+  \draw[skL, line width=0.3pt] ({#1+#2/2},{#3*0.82}) -- ++(0,{#3*0.18});}
+\newcommand{\skFoto}[2]{% x, y: foto con su QR debajo, pegada a una caja
+  \draw[cAcc, line width=0.4pt, fill=cEncBg] (#1,#2) rectangle ++(4,5);
+  \draw[cAcc, line width=0.4pt] ({#1+2},{#2+3.3}) circle (0.9);
+  \draw[cAcc, line width=0.4pt] ({#1+0.6},{#2+0.4}) .. controls ({#1+1},{#2+2}) and ({#1+3},{#2+2}) .. ({#1+3.4},{#2+0.4});
+  \draw[skL, line width=0.4pt, fill=white] ({#1+0.5},{#2-4.2}) rectangle ++(3,3);
+  \fill[skL] ({#1+0.8},{#2-3.9}) rectangle ++(0.9,0.9);
+  \fill[skL] ({#1+2.3},{#2-3.9}) rectangle ++(0.9,0.9);
+  \fill[skL] ({#1+0.8},{#2-2.4}) rectangle ++(0.9,0.9);
+  \fill[skL] ({#1+2.4},{#2-2.3}) rectangle ++(0.5,0.5);}
+\newcommand{\skRobot}[1]{% x: TurtleBot 4 Lite de costado
+  \draw[skL, line width=0.5pt, fill=white, rounded corners=1.5pt] (#1,1) rectangle ++(14,5);
+  \draw[skL, line width=0.5pt, fill=white] ({#1+4},6) rectangle ++(6,1.6);
+  \draw[skL, line width=0.5pt, fill=white] ({#1+5.5},7.6) rectangle ++(3,1.4);
+  \draw[cAcc, line width=0.5pt, fill=cEncBg] ({#1+12.2},3.2) rectangle ++(1.8,1.6);
+  \draw[skL, line width=0.5pt, fill=white] ({#1+3},1.2) circle (1.2);
+  \draw[skL, line width=0.5pt, fill=white] ({#1+11},1.2) circle (1.2);
+  \draw[cLight, line width=0.6pt, dash pattern=on 1pt off 0.8pt] ({#1+14.3},4) -- ++(5,1.6);
+  \draw[cLight, line width=0.6pt, dash pattern=on 1pt off 0.8pt] ({#1+14.3},4) -- ++(5,-1.2);}
+\newcommand{\circuitoLinea}{%
+  \begin{tikzpicture}[x=1mm, y=1mm]
+    \colorlet{skL}{cInk!45}
+    \draw[skL, line width=0.5pt] (-2,0) -- (128,0);
+    \skCaja{0}{14}{11}
+    \skCaja{14}{12}{8}
+    \draw[cAcc, line width=0.5pt, fill=white] (18,13) circle (3.2);
+    \draw[cAcc, line width=0.7pt, -{Stealth[length=1.3mm]}] (16.6,11.6) -- (16.6,13.6) -- (19.6,13.6);
+    \draw[cInk!30, line width=0.6pt, dash pattern=on 1.5pt off 1.5pt] (34,0.5) .. controls (50,0.5) and (52,0.5) .. (62,0.5);
+    \skRobot{40}
+    \skCaja{68}{12}{14}
+    \skCaja{80}{14}{14}
+    \skCaja{94}{12}{14}
+    \skCaja{106}{16}{14}
+    \skFoto{72}{6.5}
+    \skFoto{85}{6.5}
+    \skFoto{97}{6.5}
+    \skFoto{112}{6.5}
+    \draw[cCelD, line width=0.8pt, rounded corners=0.8pt] (84.2,1.6) rectangle (89.8,12.3);
+  \end{tikzpicture}}

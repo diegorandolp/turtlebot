@@ -1,0 +1,49 @@
+This directory contains work from two different places. They are listed
+separately because the terms are not the same.
+
+
+1. THE TEMPLATE
+---------------
+style.tex, slides.tex, demo.tex, check.sh, README.md
+
+    Copyright the contributors to this repository.
+    Licensed under Creative Commons Attribution 4.0 International (CC BY 4.0).
+    https://creativecommons.org/licenses/by/4.0/
+
+    You may copy, adapt and redistribute this, including commercially,
+    provided you give appropriate credit, link to the licence, and indicate
+    whether you made changes.
+
+    There is no upstream theme to credit here. The beamer themes underneath —
+    Madrid, miniframes, circles — ship with beamer itself and carry beamer's
+    own licence; using them creates no obligation. Everything above them, the
+    palette and its derivations, the seven named blocks, the title page and
+    the SWOT grid, was written for this deck.
+
+
+2. THE COVER PHOTOGRAPH
+-----------------------
+figures/background.png
+
+    A photograph taken by the author, edited with a generative tool into the
+    watercolour treatment you see. Same CC BY 4.0 terms as the rest.
+
+    It is here because a template with no cover image cannot be judged: the
+    title box was designed against a photograph and looks wrong on a flat
+    ground. Replace it with your own and nothing else needs changing —
+    \slateBackground is one line in style.tex, and the watermark on every
+    other slide reads from the same file.
+
+    If you do replace it, look at two things. The title box is a pale
+    gradient, so it disappears over a pale sky; and the watermark sits at
+    6.7%, which was set against an image of this lightness.
+
+
+3. THE LOGO PLACEHOLDER
+-----------------------
+figures/logo.png
+
+    A placeholder, not a mark. No institution's logo ships with this template.
+    A logo is its owner's trademark and the licence above does not extend to
+    it; putting one in a public repository is not something a CC licence can
+    make lawful. Replace the file locally and keep it out of the history.
