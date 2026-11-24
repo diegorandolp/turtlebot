@@ -112,6 +112,7 @@ class Config:
     p_descartar: float = 0.6        # ...y se DESCARTA solo si otra persona gana con p >= esto; si de cerca no se sabe
                                     # quien es (p chicas), queda "dudosa" y se revisan primero las demas
     # --- la meta del 21/11: bandera a cuadros al fondo del tubo, 4 fotos en los costados (2 y 2) ---
+    qr_frente_s: float = 5.0        # s maximos buscando el punto de enfrente para el QR (antes 12; 23/11)
     qr_desde_mejor: bool = False    # leer el QR volviendo a donde mejor se vio la foto (22/11: en el sim salio PEOR que
                                     # ponerse de frente a 0.65 m: 2 de 16 sin QR; apagado, 16/16)
     barrido_hd: bool = False        # la vuelta de la meta con fotos HD (campo de 69 grados y caras ~3 veces mas grandes:
@@ -1128,7 +1129,13 @@ class Carrera:
                 f["frente"] = tuple(np.asarray(self.obj.xy) + self.cfg.d_frente_qr * n)
             fx, fy = f["frente"]
             d = math.hypot(fx - x, fy - y)
-            if d < 0.12 or now - f["t0"] > 12.0:
+            # (23/11) si en qr_frente_s no llego al punto de enfrente (la foto en una esquina, una caja en medio:
+            # "ponerme de frente no avanza" costaba 10-30 s), lee desde donde esta: la cara ya se reconocio y el
+            # paso siguiente retrocede mirandola, que suele bastar
+            if d < 0.12 or now - f["t0"] > self.cfg.qr_frente_s:
+                if d >= 0.12:
+                    self.nota(now, f"no llego al punto de enfrente en {now - f['t0']:.0f} s (a {d:.2f} m): leo el "
+                                   f"QR desde aqui")
                 mirar = math.atan2(self.obj.xy[1] - y, self.obj.xy[0] - x)
                 if abs(wrap(mirar - th)) < 0.1 or now - f["t0"] > 15.0:
                     f.update(paso=0, t0=now, th0=mirar, t_frente=now)
