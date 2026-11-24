@@ -55,7 +55,9 @@ def wrap(a):
 class Config:
     vmax: float = 0.30              # m/s en la ida (el Create 3 llega a ~0.31)
     vmax_vuelta: float = 0.31       # m/s en la vuelta (camino conocido)
-    wmax: float = 1.8               # rad/s
+    wmax: float = 1.8               # rad/s (vuelta y atascos)
+    wmax_buscar: float = 0.9        # rad/s mientras se busca (23/11: girando a 1.8 ninguna foto sale nitida y
+                                    # se pasan de largo la bandera y las fotos; a 0.9 la camara aun las ve)
     medio_ancho: float = 0.21       # m: medio ancho del carril para ELEGIR rumbo. >= el pasillo del freno del
                                     # puente (+-0.20 m): con 0.18 elegia carriles con una caja a 0.19 m de lado,
                                     # el freno no lo dejaba avanzar y se quedaba quieto mirando ese rumbo
@@ -526,13 +528,48 @@ class Carrera:
         b = self.bandera
         if b is None or b["n"] < 2:
             t = 0.0 if self.t_inicio is None else self._t_ahora - self.t_inicio
-            return t >= self.cfg.t_sin_bandera
+            if t >= self.cfg.t_sin_bandera:
+                return True
+            # (23/11) sin bandera: DOS fotos distintas (bajas, a > 0.3 m una de otra) vistas en 5 s = estoy en la
+            # meta aunque la bandera no se haya visto; cuentan las que esten cerca de ellas
+            grupo = getattr(self, "_meta_sin_bandera", None)
+            if grupo is not None:
+                return math.hypot(xy[0] - grupo[0], xy[1] - grupo[1]) < self.cfg.r_meta
+            return False
         return math.hypot(xy[0] - b["xy"][0], xy[1] - b["xy"][1]) < self.cfg.r_meta
+
+    def _recordar_cara(self, now, o):
+        """Caras vistas sin bandera confirmada: no son candidatas, pero sirven para confirmar la bandera (23/11)."""
+        if getattr(o, "z", 0.0) > self.cfg.z_max_cara:
+            return                                                  # una persona, no una foto
+        self._caras_sueltas = [(t, xy) for t, xy in getattr(self, "_caras_sueltas", []) if now - t < 5.0]
+        self._caras_sueltas.append((now, tuple(o.xy)))
+        if getattr(self, "_meta_sin_bandera", None) is None and self.estado in (IDA, EXPLORAR, FILA):
+            otras = [xy for t, xy in self._caras_sueltas[:-1]
+                     if 0.3 < math.hypot(xy[0] - o.xy[0], xy[1] - o.xy[1]) < self.cfg.r_meta
+                     and math.hypot(xy[0] - self.home[0], xy[1] - self.home[1]) > self.cfg.r_salida]
+            if otras and math.hypot(o.xy[0] - self.home[0], o.xy[1] - self.home[1]) > self.cfg.r_salida:
+                cx = (o.xy[0] + otras[0][0]) / 2.0
+                cy = (o.xy[1] + otras[0][1]) / 2.0
+                self._meta_sin_bandera = (cx, cy)
+                self.nota(now, f"dos fotos distintas a la vista en ({cx:.2f}, {cy:.2f}) y sin bandera: lo tomo como "
+                               f"la meta y miro alrededor")
+                self.marca(now, "meta_por_fotos")
+                th = self._pos[2]
+                self._mirar = [wrap(th + math.radians(60)), wrap(th - math.radians(60)), th]
+
+    @property
+    def candidatas_meta_posibles(self):
+        class _C:
+            def __init__(s, t, xy): s.t, s.xy = t, xy
+            def visto_hace(s, now): return now - s.t
+        return [_C(t, xy) for t, xy in getattr(self, "_caras_sueltas", [])]
 
     def _ver_cara_buscar(self, now, o, peso):
         if self.estado in (PAUSA, VOLVER, HECHO):
             return False
         if not self._en_meta(o.xy):
+            self._recordar_cara(now, o)                         # (se guarda: si aparece la bandera, cuentan)
             return False                                        # sin bandera (o lejos de ella) una cara no es la meta
         if self.cfg.exigir_bandera and getattr(o, "z", 0.0) > self.cfg.z_max_cara:
             return False                                        # muy alta: una persona, no una foto pegada abajo
@@ -913,7 +950,7 @@ class Carrera:
                 if "llego" not in f:
                     f["llego"] = d < 0.5                            # (por tiempo y lejos: ese tramo no se vio bien)
                 if abs(err) > 0.12 and now - f["t_punto"] < 14.0:
-                    return 0.0, float(np.clip(2.2 * err, -1.8, 1.8))
+                    return 0.0, float(np.clip(2.2 * err, -self.cfg.wmax_buscar, self.cfg.wmax_buscar))
                 f["mirando_desde"] = now
             if now - f["mirando_desde"] < self.cfg.mirar_s:        # quieto mirando la pared (2 fotos en la Pi)
                 return 0.0, 0.0
@@ -1176,7 +1213,13 @@ class Carrera:
         antes = b["n"]
         # (22/11) confianza: hoja sobre carton (como la pone el profe) = 1 vista; sobre otra cosa, media vista (hacen
         # falta 4 para confirmarla). No es requisito: si la pegan sobre otra cosa igual se encuentra, algo mas tarde
-        b["n"] += 1.0 if getattr(o, "carton", 1.0) >= 0.35 else 0.5
+        carton = getattr(o, "carton", 1.0)
+        b["n"] += 1.0 if carton >= 0.35 else 0.5
+        # (23/11) el robot paso girando y la bandera salio nitida en UN solo cuadro: con una vista clara sobre
+        # carton (>= 0.8), o una vista con caras a la vista en los ultimos 3 s, alcanza para confirmarla
+        hay_caras = any(c.xy is not None and c.visto_hace(now) < 3.0 for c in self.candidatas_meta_posibles)
+        if b["n"] < 2 and (carton >= 0.8 or hay_caras):
+            b["n"] = 2.0
         b["t"] = now
         if antes < 2 <= b["n"]:
             self.nota(now, f"bandera de la meta confirmada en ({b['xy'][0]:.2f}, {b['xy'][1]:.2f}) a {o.dist:.1f} m")
@@ -1454,9 +1497,11 @@ class Carrera:
         if phi is None:                                         # encerrado: girar hacia lo mas abierto
             k = int(np.argmax(self.libres))
             return 0.0, math.copysign(self.cfg.wmax * 0.6, ANGS[k] if ANGS[k] != 0 else 1.0)
-        r = ventana_dinamica(self.px, self.py, phi, vmax, self.cfg.wmax, self.cfg.radio_seguro, self.bloq_frente)
+        wmax = self.cfg.wmax_buscar if (self.cfg.buscar and self.estado in BUSCANDO and now >= self._desvio[0]) \
+            else self.cfg.wmax
+        r = ventana_dinamica(self.px, self.py, phi, vmax, wmax, self.cfg.radio_seguro, self.bloq_frente)
         if r is None:                                           # ningun arco seguro: girar en el sitio
-            v, w = 0.0, math.copysign(self.cfg.wmax * 0.6, phi if phi != 0 else 1.0)
+            v, w = 0.0, math.copysign(wmax * 0.6, phi if phi != 0 else 1.0)
         else:
             v, w = r
         self._vigilar_atasco(now, pos)

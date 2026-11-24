@@ -96,7 +96,8 @@ class DetectorBandera:
         H, W = m.shape
         # una hoja es una zona clara ACOTADA (el piso o el cielo claros no: ocupan media imagen)
         n, lab, st, _ = cv2.connectedComponentsWithStats(papel, connectivity=8)
-        grandes = np.nonzero((st[:, 4] > 0.2 * H * W) | (st[:, 2] > 0.8 * W) | (st[:, 3] > 0.8 * H))[0]
+        # (23/11: de cerca la hoja ocupa media imagen y toca el borde: solo se descarta lo que llena casi TODO)
+        grandes = np.nonzero((st[:, 4] > 0.6 * H * W) | ((st[:, 2] > 0.95 * W) & (st[:, 3] > 0.95 * H)))[0]
         grandes = grandes[grandes > 0]
         if grandes.size:
             papel[np.isin(lab, grandes)] = 0
@@ -144,10 +145,10 @@ class DetectorBandera:
             n, lab, st, _ = cv2.connectedComponentsWithStats(cerrada, connectivity=8)
             for i in range(1, n):
                 x, y, w, h, area = (int(v) for v in st[i])
-                if w < 20 or h < 10 or max(w, h) > 0.9 * min(H, W):
+                if w < 20 or h < 10 or max(w, h) > 0.97 * min(H, W):
                     continue                                     # (la hoja A4 a 2.5 m mide ~40 x 28 px)
-                if x <= 0 or y <= 0 or x + w >= W - 1 or y + h >= H - 1:
-                    continue                                     # cortada por el borde: se vera mejor despues
+                if (x <= 0) + (y <= 0) + (x + w >= W - 1) + (y + h >= H - 1) >= 2:
+                    continue                                     # cortada por dos bordes: se vera mejor despues
                 if any(abs(x - a) < 4 and abs(y - b) < 4 and abs(w - c) < 6 and abs(h - d) < 6 for a, b, c, d in vistas):
                     continue
                 comp = lab[y:y + h, x:x + w] == i
