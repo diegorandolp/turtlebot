@@ -67,10 +67,11 @@
       {\LARGE\slateTitle\ifx\slateSubTitle\empty\else\\[5pt] \small\slateSubTitle\fi};   % sin subtitulo: \def\slateSubTitle{}
     % autores, curso, filiacion y fecha en un solo bloque con un velo blanco: sobre la imagen
     % el texto gris del tema original no se leia
-    \node[below=0.4cm, align=center, fill=white, fill opacity=0.78, text opacity=1,
+    % solo los nombres, uno por linea, a la izquierda debajo del titulo (sin profesor, curso ni fecha)
+    \node[below=0.4cm, anchor=north west, align=left, fill=white, fill opacity=0.78, text opacity=1,
       rounded corners=3pt, inner xsep=10pt, inner ysep=5pt, text=AnalogousColor-1!250]
-      (author) at (title.south)
-      {\slateAuthor\\[2pt] \small\slateAdvisor\\[1pt] \small\slateAffiliate\\[3pt] \slateDate};
+      (author) at (title.south west)
+      {\slateAuthor};
     \node[fill=white, fill opacity=0.85, text opacity=1, rounded corners=3pt, inner sep=4pt,
       anchor=south east] at ([xshift=-0.4cm, yshift=0.35cm]current page.south east) {\slateLogo};
   \end{tikzpicture}%

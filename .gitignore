@@ -33,3 +33,11 @@ task-a/carrera-1/fotos/
 
 # ruedas para la Raspberry (60 MB; robot/desplegar_carrera.sh --bajar-ruedas)
 robot/ruedas_pi/
+
+# Tarea A . reconocimiento de Alvaro (fotos personales y modelo grande: no versionar)
+task-a/reconocer/rostros/
+task-a/reconocer/modelos/*.onnx
+task-a/reconocer/galeria.npz
+anuncios.log
+task-a/alvaro/corridas/
+task-a/alvaro/*.csv

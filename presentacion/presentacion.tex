@@ -11,7 +11,8 @@
 % facial, gestos (Tarea B), navegación autónoma (Tarea A), decisiones, resultados y lecciones.
 % Todos los números salen de los README del repositorio, de docs/pruebas_simulacro.md (robot real,
 % 19/11), de scripts/figuras.py (simulador, reconocimiento sobre la cámara real del robot) o de las corridas
-% del 22/11 con el código de la meta con bandera (banco_pruebas.py tubo:1..32 --turbo: 32/32; --duro: 13/16;
+% del 24/11 con el código final, sin turbo (banco_pruebas.py tubo:1..32: 29/32; --duro: 14/16), las carreras
+% reales del 23/11 (corridas_robot/2026-11-23/, fotos en figuras/real/) y
 % reconocimiento.evaluar con y sin espejo, 1320 cuadros por tamaño).
 % La competencia es el mismo día de la presentación: no hay resultados de la competencia en las diapositivas.
 % =============================================================================
@@ -29,10 +30,10 @@
 % la «o» de Marcelino es el emoji 🦖 de Noto Color Emoji (OFL), pasado a PNG con:
 %   magick -background none -density 300 pango:'<span font="Noto Color Emoji 48">🦖</span>' -trim +repage figuras/dino.png
 \newcommand{\dino}{\raisebox{-0.2ex}{\includegraphics[height=2ex]{figuras/dino.png}}}
-\renewcommand{\slateAuthor}{\textbf{Grupo 3}\\[1pt]\small Alvaro García \textperiodcentered\ Marcelin\dino\ Maita \textperiodcentered\ Diego Quispe \textperiodcentered\ Brigitte Rojas \textperiodcentered\ Sofía Salazar}
+\renewcommand{\slateAuthor}{\textbf{Grupo 3}\\[1pt]\small Alvaro García \textperiodcentered\ Marcelino Maita \textperiodcentered\ Diego Quispe\\\small Brigitte Rojas \textperiodcentered\ Sofía Salazar}
 \renewcommand{\slateAdvisor}{Profesor: PhD.\ Rensso Mora Colque}
 \renewcommand{\slateAffiliate}{Computer Vision \textperiodcentered\ Universidad de Ingeniería y Tecnología (UTEC)}
-\renewcommand{\slateDate}{\small Lima, noviembre de 2026}
+\renewcommand{\slateDate}{}
 
 % ---- piezas con argumentos (en el preámbulo: beamer lee el cuerpo de un frame como argumento)
 % una lección: \leccion{cifra}{afirmación}
@@ -68,6 +69,15 @@
     scale only axis, enlarge y limits={abs=0.6},
     nodes near coords, nodes near coords style={font=\fontsize{7}{8}\selectfont, text=cInk}}}
 
+% una foto real del robot con una etiqueta encima: \foto{archivo}{ancho}{etiqueta}
+\newcommand{\foto}[3]{%
+  \begin{tikzpicture}[baseline=(i.north)]
+    \node[inner sep=0pt, draw=cRule, line width=0.4pt] (i) {\includegraphics[width=#2]{figuras/real/#1}};
+    \node[anchor=north west, fill=white, fill opacity=0.88, text opacity=1, inner sep=1.3pt, rounded corners=1pt,
+      font=\fontsize{6.5}{7.5}\selectfont\bfseries, text=cInk] at ([xshift=0.8mm,yshift=-0.8mm]i.north west) {#3};
+  \end{tikzpicture}}
+\newcommand{\si}{{\color{cOk}\faCheck}}
+\newcommand{\no}{{\color{cOurs}\faTimes}}
 \input{figuras/gen/lidar.tex}   % \lidarpuntos: el scan del LiDAR en el primer pasillo (diapositiva 3)
 
 \begin{document}
@@ -191,12 +201,10 @@
         \end{axis}
       \end{tikzpicture}
     \end{column}
-    \begin{column}{0.28\textwidth}\centering
-      \includegraphics[width=\linewidth]{figuras/gen/sim_qr.png}
-    \end{column}
-    \begin{column}{0.26\textwidth}
-      {\small\textbf{QR}: solo se acepta el que está \textbf{debajo de la cara buscada}.\par}
-
+    \begin{column}{0.54\textwidth}\centering
+      \foto{hd_qr_luis.jpg}{0.49\linewidth}{\si\ QR de la buscada}\hfill
+      \foto{hd_qr_vecino.jpg}{0.49\linewidth}{\no\ QR de la vecina}\\[1.5mm]
+      {\small\textbf{QR}: solo vale el que está \textbf{debajo de la cara buscada}.\par}
     \end{column}
   \end{columns}
 \end{frame}
@@ -205,89 +213,49 @@
 \section{Tarea A}
 % =============================================================================
 
-% 5 · navegación autónoma --------------------------------------------------------
-\begin{frame}{Tarea A: navegación autónoma}
-  \begin{columns}[c,onlytextwidth]
-    \begin{column}{0.5\textwidth}\centering
-      \begin{tikzpicture}[x=1mm, y=1mm, d/.style={font=\fontsize{6.5}{7.5}\selectfont, text=cSrc, align=center, anchor=north}]
-        \node[est=cIda] (ida) at (0,0) {IDA};
-        \node[est=cFila] (fila) at (24,0) {META};
-        \node[est=cFila] (rec) at (50,0) {RECONOCER};
-        \node[est=cFila] (qr) at (50,-24) {LEER QR};
-        \node[est=cIda] (vol) at (24,-24) {VOLVER};
-        \node[est=cIda] (fin) at (0,-24) {ANUNCIAR};
-        \draw[ar] (ida) -- (fila); \draw[ar] (fila) -- (rec); \draw[ar] (rec) -- (qr);
-        \draw[ar] (qr) -- (vol); \draw[ar] (vol) -- (fin);
-        \node[d] at ([yshift=-1.2mm]ida.south) {sigue las\\flechas};
-        \node[d] at ([yshift=-1.2mm]fila.south) {ve las\\4 fotos};
-        \node[d, anchor=north east, align=right] at ([xshift=-1.5mm, yshift=-1.2mm]rec.south) {confirma\\de cerca};
-        \node[d] at ([yshift=-1.2mm]vol.south) {turbo, Dijkstra\\e ICP};
-      \end{tikzpicture}
-    \end{column}
-    \begin{column}{0.48\textwidth}\centering
-      \begin{tikzpicture}[x=64mm, y=64mm]
-        \begin{scope}
-          \clip (-0.45,-0.2) rectangle (0.45,0.66);
-          \begin{scope}[rotate=90]
-            \draw[cInk!50, line width=0.5pt, fill=cPaper] (0,0) circle (0.175);
-            \input{figuras/gen/arcos.tex}
-          \end{scope}
-        \end{scope}
-        \node[font=\scriptsize, text=cSrc] at (0,-0.12) {robot};
-        \node[font=\scriptsize, text=cSrc, anchor=south] at (-0.15,0.6) {caja};
-        \node[font=\scriptsize, text=cSrc, anchor=west] at (0.36,0.25) {pared};
-      \end{tikzpicture}\\[1mm]
-      {\scriptsize {\color{cAcc!60}\rule[0.5ex]{3mm}{0.8pt}} seguro\quad {\color{cMuted}\rule[0.5ex]{3mm}{0.8pt}} choca\quad {\color{cAcc}\rule[0.4ex]{3mm}{1.6pt}} elegido\par}
-      \vspace{1.5mm}
-      {\small\textbf{Ventana dinámica}: 114 trayectorias, 20 veces por segundo\par}
-    \end{column}
-  \end{columns}
+% 5 · una carrera real ----------------------------------------------------------------
+\begin{frame}{Tarea A: una carrera real}
+  \centering
+  \foto{senal_salida.jpg}{34mm}{1\ \ IDA \textperiodcentered\ 0\,s}\hspace{2mm}%
+  \foto{bandera_lejos.jpg}{34mm}{2\ \ bandera \textperiodcentered\ 21\,s}\hspace{2mm}%
+  \foto{dos_fotos.jpg}{34mm}{3\ \ vuelta lenta \textperiodcentered\ 27\,s}\\[2mm]
+  \foto{cara_luis.jpg}{34mm}{4\ \ la más parecida \textperiodcentered\ 45\,s}\hspace{2mm}%
+  \foto{hd_qr_luis.jpg}{34mm}{5\ \ HD + QR \textperiodcentered\ 48\,s}\hspace{2mm}%
+  \foto{mapa_luis.jpg}{34mm}{6\ \ volver a A \textperiodcentered\ 60\,s}\\[1.5mm]
+  {\small Buscando a \textbf{Luis Izaguirre}: \textbf{61\,s}, palabra correcta, 0 choques \nota{(robot real, 23/11)}\par}
 \end{frame}
 
-% 6 · señales, bandera y las 4 fotos ----------------------------------------------------
-\begin{frame}{Tarea A: señales, bandera y las 4 fotos}
-  \begin{columns}[T,onlytextwidth]
-    \begin{column}{0.5\textwidth}\centering
-      \begin{tikzpicture}[x=1mm, y=1mm]
-        \node[img, anchor=north west] (f) at (0,0) {\includegraphics[width=27mm]{figuras/gen/sim_flecha.png}};
-        \node[img, anchor=north west] (b) at (34,0) {\includegraphics[width=31mm]{figuras/gen/flechas_banco.png}};
-        \draw[ar] (f.east) -- (b.west);
-        \node[font=\scriptsize, text=cInk, below=1.2mm of f, align=center] {lo que ve el robot};
-        \node[font=\scriptsize, text=cInk, below=1.2mm of b, align=center] {se compara con 27 flechas\\dibujadas en el código\\(sin red neuronal)};
-      \end{tikzpicture}\\[5mm]
-      \begin{columns}[T]
-        \begin{column}{0.45\linewidth}\centering
-          \cifra{$\sim$88\,\%}{de las flechas detectadas en cada foto real}
-        \end{column}
-        \begin{column}{0.45\linewidth}\centering
-          \cifra{0\,\%}{con el sentido equivocado}
-        \end{column}
-      \end{columns}
+% 6 · en la meta: bandera, vuelta lenta y confirmar con HD ---------------------------------
+\begin{frame}{Tarea A: en la meta}
+  \begin{columns}[c,onlytextwidth]
+    \begin{column}{0.24\textwidth}\centering
+      \begin{tikzpicture}[x=0.95mm, y=0.95mm]
+        \fill[cPaper] (0,0) rectangle (22,56);
+        \draw[pared] (0,56) -- (0,0) -- (22,0) -- (22,56);
+        \node[bandera] at (11,1.6) {};
+        \node[foto, minimum size=2.4mm] at (0.9,34) {};
+        \node[foto, minimum size=2.4mm] at (0.9,20) {};
+        \node[foto, minimum size=2.4mm] at (21.1,44) {};
+        \node[buscada, minimum size=2.8mm] at (21.1,26) {};
+        \draw[cFila, line width=0.4pt, dash pattern=on 1pt off 1pt] (11,16) circle (7);
+        \foreach \a/\n in {-45/1, 0/2, 45/3, 135/4, 180/5, -135/6}{
+          \draw[cFila, line width=0.6pt, -{Stealth[length=1mm]}] (11,16) -- ++(\a:7);
+          \node[circle, draw=cFila, fill=white, line width=0.5pt, inner sep=0pt, minimum size=3mm,
+                font=\fontsize{5.5}{5.5}\selectfont\bfseries, text=cFila] at ($(11,16)+(\a:11)$) {\n};}
+        \draw[cInk, fill=white, line width=0.6pt] (11,16) circle (2.4);
+        \draw[cInk, line width=0.8pt, -{Stealth[length=1.1mm]}] (11,16) -- (11,13.6);
+        \draw[cIda, line width=1pt, -{Stealth[length=1.4mm]}] (11,63) -- (11,57);
+      \end{tikzpicture}\\[1mm]
+      {\scriptsize vuelta lenta:\\6 paradas, 0.4\,rad/s\par}
     \end{column}
-    \begin{column}{0.47\textwidth}
-      \begin{minipage}[t]{0.40\linewidth}\vspace{0pt}\centering
-        \begin{tikzpicture}[x=0.95mm, y=0.95mm]
-          \fill[cPaper] (0,0) rectangle (22,56);
-          \draw[pared] (0,56) -- (0,0) -- (22,0) -- (22,56);
-          \node[bandera] at (11,1.6) {};
-          \node[foto, minimum size=2.4mm] at (0.9,34) {};
-          \node[foto, minimum size=2.4mm] at (0.9,20) {};
-          \node[foto, minimum size=2.4mm] at (21.1,44) {};
-          \node[buscada, minimum size=2.8mm] at (21.1,26) {};
-          \draw[cFila, line width=0.4pt, dash pattern=on 1pt off 1pt] (11,16) circle (7);
-          \foreach \a/\n in {-45/1, 0/2, 45/3, 135/4, 180/5, -135/6}{
-            \draw[cFila, line width=0.6pt, -{Stealth[length=1mm]}] (11,16) -- ++(\a:7);
-            \node[circle, draw=cFila, fill=white, line width=0.5pt, inner sep=0pt, minimum size=3mm,
-                  font=\fontsize{5.5}{5.5}\selectfont\bfseries, text=cFila] at ($(11,16)+(\a:11)$) {\n};}
-          \draw[cInk, fill=white, line width=0.6pt] (11,16) circle (2.4);
-          \draw[cInk, line width=0.8pt, -{Stealth[length=1.1mm]}] (11,16) -- (11,13.6);
-          \draw[cIda, line width=1pt, -{Stealth[length=1.4mm]}] (11,63) -- (11,57);
-        \end{tikzpicture}
-      \end{minipage}\hfill
-      \begin{minipage}[t]{0.56\linewidth}\vspace{0pt}\centering
-        \includegraphics[width=0.85\linewidth]{figuras/gen/sim_bandera.png}\\[0.8mm]
-        {\scriptsize\color{cSrc}la bandera confirma la meta\par}
-      \end{minipage}
+    \begin{column}{0.74\textwidth}\centering
+      \foto{bandera_salida.jpg}{36mm}{\no\ bandera de la salida: se ignora}\hspace{2mm}%
+      \foto{bandera_meta.jpg}{36mm}{\si\ bandera de la meta}\\[2.5mm]
+      \foto{preview_18px.jpg}{36mm}{vista previa: $p = 0.11$}\hspace{2mm}%
+      \begin{tikzpicture}[baseline=(c.north)]
+        \node[inner sep=0pt] (c) {\foto{hd_confirma.jpg}{48mm}{HD: $p = 1.00$}};
+        \draw[ar, line width=0.9pt] ([xshift=-6mm,yshift=6mm]c.west) -- ([xshift=-0.5mm,yshift=6mm]c.west);
+      \end{tikzpicture}
     \end{column}
   \end{columns}
 \end{frame}
@@ -326,33 +294,48 @@
 
 % 8 · resultados ----------------------------------------------------------------------
 \begin{frame}{Resultados}
-  \begin{columns}[c,onlytextwidth]
-    \begin{column}{0.44\textwidth}
-      {\small\textbf{Simulador} \nota{(éxitos)}\par}\vspace{1.5mm}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.36\textwidth}
+      {\small\textbf{Simulador} \nota{(éxitos, código final)}\par}\vspace{1.5mm}
       \begin{tikzpicture}
-        \begin{axis}[barras, width=24mm, height=18mm, xmin=0, xmax=100, ytick={0,1},
-            yticklabel style={text width=27mm},
+        \begin{axis}[barras, width=18mm, height=14mm, xmin=0, xmax=100, ytick={0,1},
+            yticklabel style={text width=24mm},
             yticklabels={{32 circuitos al azar},{odometría con error y cámara lenta}},
             nodes near coords={\pgfmathprintnumber{\pgfplotspointmeta}\,\%}]
-          \addplot[fill=cAcc, draw=none] coordinates {(100,0) (81,1)};
+          \addplot[fill=cAcc, draw=none] coordinates {(91,0) (88,1)};
         \end{axis}
-      \end{tikzpicture}\\[1.5mm]
-      \cifra{88\,s}{mediana de la carrera completa}
+      \end{tikzpicture}\\[2mm]
+      \cifra{94.5\,s}{mediana de la carrera simulada}
       \vspace{1mm}
       {\footnotesize\color{cSrc}0 choques ni respuestas equivocadas en 48 carreras\par}
     \end{column}
-    \begin{column}{0.54\textwidth}
-      {\small\textbf{Robot real} \nota{(primera carrera, 19/11)}\par}\vspace{3mm}
+    \begin{column}{0.62\textwidth}
+      {\small\textbf{Robot real} \nota{(nuestras pruebas en el laboratorio, 23/11)}\par}\vspace{2mm}
       \begin{tikzpicture}[x=1mm, y=1mm]
-        \fase{0}{0}{15}{cIda}{ida}
-        \fase{0}{15}{52}{cFila}{buscar}
-        \fase{0}{52}{82}{cQr}{QR}
-        \fase{0}{82}{93.9}{cVuelta}{}
-        \node[font=\small\bfseries, text=cInk, anchor=west] at (63,2.5) {93.9\,s};
-        \draw[cInk!40, line width=0.3pt] (0,-2) -- (62,-2);
-        \foreach \t in {0,30,60,90}{\draw[cInk!40] (\t*0.65,-2) -- ++(0,-0.8); \node[font=\fontsize{6.5}{7.5}\selectfont, text=cSrc, anchor=north] at (\t*0.65,-2.6) {\t\,s};}
+        \foreach \y/\h/\a/\b/\c/\d in {0/Luis/21.6/45.4/47.7/61.4, -5.5/Mishelle/22.0/30.6/43.4/77.5,
+            -11/Thiago/30.5/55.6/77.3/103.8, -22/Angel*/21.9/51.3/83.5/101.1, -27.5/Mishelle/20.4/45.5/71.9/88.5}{
+          \fill[cIda] (0,\y) rectangle (\a*0.6,\y+4);
+          \fill[cFila] (\a*0.6,\y) rectangle (\b*0.6,\y+4);
+          \fill[cQr] (\b*0.6,\y) rectangle (\c*0.6,\y+4);
+          \fill[cVuelta] (\c*0.6,\y) rectangle (\d*0.6,\y+4);
+          \node[font=\fontsize{6.5}{7.5}\selectfont, text=cInk, anchor=east] at (-1,\y+2) {\h};
+          \node[font=\fontsize{6.5}{7.5}\selectfont\bfseries, text=cInk, anchor=west] at (\d*0.6+1,\y+2) {\pgfmathprintnumber[fixed,precision=0]{\d}\,s};}
+        \fill[cMuted!35] (0,-16.5) rectangle (112*0.6,-12.5);
+        \node[font=\fontsize{6.5}{7.5}\selectfont, text=cInk, anchor=east] at (-1,-14.5) {Angel};
+        \node[font=\fontsize{6.5}{7.5}\selectfont, text=cInk] at (56*0.6,-14.5) {no encontró la meta};
+                \begin{scope}[shift={(0,-34)}, every node/.style={font=\fontsize{6.5}{7.5}\selectfont, anchor=west, text=cInk}]
+          \fill[cIda] (0,0) rectangle (3,2.5);     \node at (3.5,1.25) {ida};
+          \fill[cFila] (11,0) rectangle (14,2.5);  \node at (14.5,1.25) {meta};
+          \fill[cQr] (25,0) rectangle (28,2.5);    \node at (28.5,1.25) {confirmar y QR};
+          \fill[cVuelta] (48,0) rectangle (51,2.5); \node at (51.5,1.25) {volver};
+          \node[text=cSrc] at (0,-3.2) {* sin QR: anunció solo el nombre};
+        \end{scope}
       \end{tikzpicture}\\[3mm]
-      \cifra{0 choques}{volvió a 21\,cm de A con la persona correcta}
+      \begin{columns}[T]
+        \begin{column}{0.32\linewidth}\cifra{4 de 6}{con la palabra correcta}\end{column}
+        \begin{column}{0.32\linewidth}\cifra{61\,s}{la mejor (mediana 83\,s)}\end{column}
+        \begin{column}{0.32\linewidth}\cifra{0}{choques o nombres equivocados}\end{column}
+      \end{columns}
     \end{column}
   \end{columns}
 \end{frame}
@@ -361,9 +344,9 @@
 \begin{frame}{Decisiones de diseño}
   \vspace{3mm}
   \decision{\faMicrochip}{Todo en la Raspberry}{sin PC ni Wi-Fi}{solo $\sim$2 fotos/s}\hfill
-  \decision{\faTachometer*}{Vuelta en turbo (0.45\,m/s)}{vuelta 28\,\% más rápida}{sin el límite de la Create 3}\\[8mm]
+  \decision{\faFlagCheckered}{Bandera y vuelta lenta en la meta}{ve las 4 fotos en $\sim$22\,s}{depende de ver la bandera}\\[8mm]
   \decision{\faDraftingCompass}{Reglas en vez de entrenar}{flechas, bandera y gestos sin modelos}{una foto sola puede fallar}\hfill
-  \decision{\faSearchPlus}{Confirmar con foto HD}{no se decide con caras de 14--25\,px}{$\sim$4 s por foto HD}
+  \decision{\faSearchPlus}{Confirmar con foto HD}{no se decide con caras de 14--25\,px}{2--3\,s más por foto}
 \end{frame}
 
 % =============================================================================
@@ -374,7 +357,7 @@
 \begin{frame}{Lecciones aprendidas}
   \vspace{2mm}
   \leccion{42 \textrightarrow\ 92\,\%}{Simular con los tiempos reales del robot.}
-  \leccion{9 fallos}{Probar pronto en el robot: aparecen errores que el simulador no muestra.}
+  \leccion{14 fallos}{Probar pronto en el robot: aparecen errores que el simulador no muestra.}
   \leccion{12 \textrightarrow\ 2\,ms}{Medir antes de optimizar: el cuello era Python, no las redes.}
   \leccion{0 errores}{Ante la duda, no adivinar: sin QR seguro, se anuncia solo el nombre.}
   \vfill
